@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Notes Buddy</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        h1 {
+            color: #4ec9b0;
+            font-size: 1.4rem;
+            margin-bottom: 24px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px 14px;
+            background: #2d2d2d;
+            border: 1px solid #444;
+            color: #d4d4d4;
+            font-family: monospace;
+            font-size: 1rem;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-bottom: 32px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #4ec9b0;
+        }
+
+        .date-group {
+            margin-bottom: 28px;
+        }
+
+        .date-label {
+            color: #888;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 6px;
+        }
+
+        .command-row {
+            display: flex;
+            flex-direction: column;
+            padding: 8px 0;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .command-top {
+            display: flex;
+            gap: 20px;
+        }
+
+        .time {
+            color: #888;
+            min-width: 55px;
+            font-size: 0.85rem;
+            padding-top: 1px;
+        }
+
+        .text {
+            color: #9cdcfe;
+        }
+
+        .workdir {
+            color: #555;
+            font-size: 0.78rem;
+            margin-left: 75px;  /* aligns under the command text, past the time column */
+            margin-top: 2px;
+        }
+
+        .summary-box {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 16px 20px;
+            margin-bottom: 32px;
+        }
+
+        .summary-box h2 {
+            color: #4ec9b0;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin: 0 0 14px 0;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 14px;
+        }
+
+        .stat {
+            background: #1e1e1e;
+            border-radius: 4px;
+            padding: 10px 14px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.75rem;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            color: #d4d4d4;
+            font-size: 0.95rem;
+        }
+
+        .topics {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 4px;
+        }
+
+        .empty {
+            color: #555;
+            margin-top: 40px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<h1>⚡ Notes Buddy</h1>
+
+<div class="summary-box">
+    <h2>Today's Summary</h2>
+    <div class="summary-grid">
+        <div class="stat">
+            <div class="stat-label">Commands Run</div>
+            <div class="stat-value" id="totalCommands">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Most Used</div>
+            <div class="stat-value" id="mostUsed">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Topics Touched</div>
+            <div class="topics" id="topics"></div>
+        </div>
+    </div>
+</div>
+
+<input type="text" id="search" placeholder="Search commands..." oninput="search()" />
+
+<div id="output"></div>
+
+<script>
+    let allCommands = [];
+
+    // runs once on page load — fetches everything from the backend
+    async function load() {
+        const res = await fetch('/commands/all');
+        allCommands = await res.json();
+        render(allCommands);
+        loadSummary();
+    }
+
+    async function loadSummary() {
+        const res = await fetch('/summary');
+        const data = await res.json();
+
+        document.getElementById('totalCommands').textContent = data.totalCommands;
+        document.getElementById('mostUsed').textContent = data.mostUsed;
+
+        const topicsEl = document.getElementById('topics');
+        topicsEl.innerHTML = data.topicsTouched.length
+            ? data.topicsTouched.map(t => `<span class="topic-tag">${t}</span>`).join('')
+            : '<span style="color:#555">none yet</span>';
+    }
+
+    // filters the already-loaded list, no extra network call needed
+    function search() {
+        const query = document.getElementById('search').value.toLowerCase();
+        const filtered = allCommands.filter(c => c.text.toLowerCase().includes(query));
+        render(filtered);
+    }
+
+    function render(commands) {
+        const output = document.getElementById('output');
+
+        if (commands.length === 0) {
+            output.innerHTML = '<div class="empty">No commands found.</div>';
+            return;
+        }
+
+        // group commands by date
+        const groups = {};
+        for (const cmd of commands) {
+            const date = cmd.savedAt.split('T')[0]; // "2026-06-27T01:02" → "2026-06-27"
+            if (!groups[date]) groups[date] = [];
+            groups[date].push(cmd);
+        }
+
+        let html = '';
+        // show newest date first
+        for (const date of Object.keys(groups).sort().reverse()) {
+            html += `<div class="date-group">`;
+            html += `<div class="date-label">${formatDate(date)}</div>`;
+
+            // show newest command first within each day
+            for (const cmd of groups[date].reverse()) {
+                const time = cmd.savedAt.split('T')[1].substring(0, 5);
+                const dir = cmd.workingDir && cmd.workingDir !== 'unknown'
+                    ? `<div class="workdir">📁 ${escapeHtml(cmd.workingDir)}</div>`
+                    : '';
+                html += `
+                    <div class="command-row">
+                        <div class="command-top">
+                            <span class="time">${time}</span>
+                            <span class="text">${escapeHtml(cmd.text)}</span>
+                        </div>
+                        ${dir}
+                    </div>`;
+            }
+
+            html += `</div>`;
+        }
+
+        output.innerHTML = html;
+    }
+
+    function formatDate(dateStr) {
+        const d = new Date(dateStr);
+        return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    // prevents XSS — if a command contains <script> it won't execute in the browser
+    function escapeHtml(text) {
+        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    load();
+
+    // auto-refresh every 15 seconds so new commands appear without manual reload
+    setInterval(load, 15000);
+</script>
+
+</body>
+</html>
