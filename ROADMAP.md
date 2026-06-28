@@ -29,10 +29,11 @@
 
 ---
 
-## 🔲 Month 1 Remaining
+## ✅ Month 1 Remaining (Done)
 
-- [ ] Category filter buttons on dashboard (click [git] to show only git commands)
-- [ ] Show category tag next to each command in the list
+- [x] Category filter buttons on dashboard (click [git] to show only git commands)
+- [x] Git repo name tracked per command (🔀 label in UI)
+- [x] Docker support — multi-stage Dockerfile, volume mounts for log + DB
 
 ---
 
@@ -41,7 +42,6 @@
 - [ ] Switch from H2 to PostgreSQL
 - [ ] Session detection — group commands by 30-min idle gap
 - [ ] Session view — "what did I do in this session"
-- [ ] Store git repo name per command (detect from working directory)
 
 ---
 

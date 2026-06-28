@@ -6,6 +6,7 @@
 | Day 1 | Terminal logger, H2 DB, bash history | [day1/day1-notes.md](day1/day1-notes.md) |
 | Day 2 | UI dashboard, daily summary, categories | [day2/day2-notes.md](day2/day2-notes.md) |
 | Day 3 | Working directory, clean log file, bash fix | [day3/day3-notes.md](day3/day3-notes.md) |
+| Day 4 | Repo name tracking, filter buttons, Docker | [day4/day4-notes.md](day4/day4-notes.md) |
 
 ---
 

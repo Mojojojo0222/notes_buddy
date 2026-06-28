@@ -1,0 +1,7 @@
+target/
+*.md
+docs/
+.git/
+.gitignore
+notesbuddy-db.mv.db
+notesbuddy-db.trace.db

@@ -20,3 +20,6 @@ application-local.properties
 
 # Log files
 *.log
+
+# general purpose file
+AI_CONTEXT.md

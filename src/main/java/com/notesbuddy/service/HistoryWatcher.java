@@ -42,17 +42,18 @@ public class HistoryWatcher {
         stateRepo.save(state);
 
         for (String line : newLines) {
-            // every line is exactly: /path/to/dir|command text
-            int pipe = line.indexOf('|');
-            if (pipe == -1) continue;
+            // every line is exactly: /path/to/dir|repoName|command text
+            String[] parts = line.split("\\|", 3); // max 3 parts, command may contain |
+            if (parts.length < 3) continue;
 
-            String dir     = line.substring(0, pipe).trim();
-            String command = line.substring(pipe + 1).trim();
+            String dir      = parts[0].trim();
+            String repoName = parts[1].trim();
+            String command  = parts[2].trim();
 
             if (isJunk(command)) continue;
 
-            repo.save(new Command(command, detectCategory(command), dir));
-            System.out.println("Saved [" + dir + "]: " + command);
+            repo.save(new Command(command, detectCategory(command), dir, repoName));
+            System.out.println("Saved [" + dir + "] [" + repoName + "]: " + command);
         }
     }
 

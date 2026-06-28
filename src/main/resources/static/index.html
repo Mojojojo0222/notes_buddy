@@ -127,6 +127,30 @@
             margin-top: 4px;
         }
 
+        .filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .filter-btn {
+            background: #2d2d2d;
+            border: 1px solid #444;
+            color: #888;
+            font-family: monospace;
+            font-size: 0.8rem;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        /* active = teal border + teal text */
+        .filter-btn.active {
+            border-color: #4ec9b0;
+            color: #4ec9b0;
+        }
+
         .empty {
             color: #555;
             margin-top: 40px;
@@ -156,19 +180,58 @@
     </div>
 </div>
 
-<input type="text" id="search" placeholder="Search commands..." oninput="search()" />
+<input type="text" id="search" placeholder="Search commands..." oninput="applyFilters()" />
+
+<div class="filters" id="filters"></div>
 
 <div id="output"></div>
 
 <script>
     let allCommands = [];
+    let activeFilters = new Set(); // tracks which category buttons are active
 
-    // runs once on page load — fetches everything from the backend
     async function load() {
         const res = await fetch('/commands/all');
         allCommands = await res.json();
-        render(allCommands);
+        buildFilterButtons(); // build buttons from actual categories in data
+        applyFilters();       // render with current filter state
         loadSummary();
+    }
+
+    function buildFilterButtons() {
+        // collect every unique category present in loaded commands
+        const categories = [...new Set(allCommands.map(c => c.category).filter(Boolean))].sort();
+
+        const filtersEl = document.getElementById('filters');
+        filtersEl.innerHTML = categories.map(cat => {
+            const isActive = activeFilters.has(cat);
+            return `<button class="filter-btn ${isActive ? 'active' : ''}" onclick="toggleFilter('${cat}')">${cat}</button>`;
+        }).join('');
+    }
+
+    function toggleFilter(category) {
+        // if already active → remove it (deselect), else add it
+        if (activeFilters.has(category)) {
+            activeFilters.delete(category);
+        } else {
+            activeFilters.add(category);
+        }
+        buildFilterButtons(); // re-render buttons so active state updates
+        applyFilters();
+    }
+
+    // single source of truth for filtering — always combines search + category filters
+    function applyFilters() {
+        const query = document.getElementById('search').value.toLowerCase();
+
+        const filtered = allCommands.filter(c => {
+            const matchesSearch = c.text.toLowerCase().includes(query);
+            // if no filters active → show all, else command must match one of active filters
+            const matchesCategory = activeFilters.size === 0 || activeFilters.has(c.category);
+            return matchesSearch && matchesCategory;
+        });
+
+        render(filtered);
     }
 
     async function loadSummary() {
@@ -184,12 +247,7 @@
             : '<span style="color:#555">none yet</span>';
     }
 
-    // filters the already-loaded list, no extra network call needed
-    function search() {
-        const query = document.getElementById('search').value.toLowerCase();
-        const filtered = allCommands.filter(c => c.text.toLowerCase().includes(query));
-        render(filtered);
-    }
+
 
     function render(commands) {
         const output = document.getElementById('output');
@@ -219,13 +277,16 @@
                 const dir = cmd.workingDir && cmd.workingDir !== 'unknown'
                     ? `<div class="workdir">📁 ${escapeHtml(cmd.workingDir)}</div>`
                     : '';
+                const repo = cmd.repoName && cmd.repoName !== 'none'
+                    ? `<div class="workdir">🔀 ${escapeHtml(cmd.repoName)}</div>`
+                    : '';
                 html += `
                     <div class="command-row">
                         <div class="command-top">
                             <span class="time">${time}</span>
                             <span class="text">${escapeHtml(cmd.text)}</span>
                         </div>
-                        ${dir}
+                        ${dir}${repo}
                     </div>`;
             }
 
