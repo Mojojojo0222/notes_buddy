@@ -34,6 +34,9 @@
 - [x] Category filter buttons on dashboard (click [git] to show only git commands)
 - [x] Git repo name tracked per command (🔀 label in UI)
 - [x] Docker support — multi-stage Dockerfile, volume mounts for log + DB
+- [x] Spring Boot Actuator — /actuator/health for K8s liveness + readiness probes
+- [x] Externalized config via env vars — PORT, DB_PATH, H2_CONSOLE
+- [x] "All" button to clear all active category filters
 
 ---
 

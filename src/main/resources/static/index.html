@@ -203,10 +203,22 @@
         const categories = [...new Set(allCommands.map(c => c.category).filter(Boolean))].sort();
 
         const filtersEl = document.getElementById('filters');
-        filtersEl.innerHTML = categories.map(cat => {
+
+        // "all" button clears every active filter — always shown first
+        const clearBtn = `<button class="filter-btn ${activeFilters.size === 0 ? 'active' : ''}" onclick="clearFilters()">all</button>`;
+
+        const catBtns = categories.map(cat => {
             const isActive = activeFilters.has(cat);
             return `<button class="filter-btn ${isActive ? 'active' : ''}" onclick="toggleFilter('${cat}')">${cat}</button>`;
         }).join('');
+
+        filtersEl.innerHTML = clearBtn + catBtns;
+    }
+
+    function clearFilters() {
+        activeFilters.clear();  // empty the Set — size becomes 0 → applyFilters shows everything
+        buildFilterButtons();
+        applyFilters();
     }
 
     function toggleFilter(category) {
