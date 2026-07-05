@@ -31,10 +31,11 @@
             <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
 
-        <!-- H2: lightweight in-memory database, no installation needed -->
+        <!-- PostgreSQL driver: connects Spring Boot to a real Postgres database -->
         <dependency>
-            <groupId>com.h2database</groupId>
-            <artifactId>h2</artifactId>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Actuator: adds /actuator/health endpoint — required for K8s liveness + readiness probes -->

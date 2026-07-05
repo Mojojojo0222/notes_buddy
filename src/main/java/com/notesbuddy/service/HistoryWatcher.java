@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 
 @Service
@@ -42,17 +44,34 @@ public class HistoryWatcher {
         stateRepo.save(state);
 
         for (String line : newLines) {
-            // every line is exactly: /path/to/dir|repoName|command text
-            String[] parts = line.split("\\|", 3); // max 3 parts, command may contain |
-            if (parts.length < 3) continue;
+            String[] parts = line.split("\\|", 4);
 
-            String dir      = parts[0].trim();
-            String repoName = parts[1].trim();
-            String command  = parts[2].trim();
+            String timestamp, dir, repoName, command;
+
+            // new format: timestamp|dir|repo|command (4 parts)
+            // old format: dir|repo|command (3 parts) — fallback for existing log lines
+            if (parts.length == 4) {
+                timestamp = parts[0].trim();
+                dir       = parts[1].trim();
+                repoName  = parts[2].trim();
+                command   = parts[3].trim();
+            } else if (parts.length == 3) {
+                timestamp = null;
+                dir       = parts[0].trim();
+                repoName  = parts[1].trim();
+                command   = parts[2].trim();
+            } else {
+                continue;
+            }
 
             if (isJunk(command)) continue;
 
-            repo.save(new Command(command, detectCategory(command), dir, repoName));
+            Command cmd = new Command(command, detectCategory(command), dir, repoName);
+            if (timestamp != null) {
+                try { cmd.setSavedAt(LocalDateTime.parse(timestamp)); }
+                catch (DateTimeParseException ignored) {}
+            }
+            repo.save(cmd);
             System.out.println("Saved [" + dir + "] [" + repoName + "]: " + command);
         }
     }
@@ -60,6 +79,7 @@ public class HistoryWatcher {
     private boolean isJunk(String command) {
         if (command.isEmpty()) return true;
         if (command.startsWith("#")) return true;
+        if (command.startsWith("[200~")) return true;  // bracketed paste artifact from terminal
         if (command.contains("=") && !command.contains(" ")) return true;
         if (command.length() < 2) return true;
         return false;

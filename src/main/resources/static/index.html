@@ -4,163 +4,181 @@
     <meta charset="UTF-8">
     <title>Notes Buddy</title>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: monospace;
-            background: #1e1e1e;
-            color: #d4d4d4;
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 0 20px;
+            font-family: 'Courier New', monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 32px 24px 80px;
         }
 
-        h1 {
-            color: #4ec9b0;
-            font-size: 1.4rem;
+        .header { margin-bottom: 28px; }
+        .header h1 { color: #4ec9b0; font-size: 1.5rem; font-weight: bold; letter-spacing: 1px; }
+        .header p  { color: #484f58; font-size: 0.8rem; margin-top: 4px; }
+
+        /* ── Summary ── */
+        .summary-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 18px 22px;
             margin-bottom: 24px;
         }
-
-        input {
-            width: 100%;
-            padding: 10px 14px;
-            background: #2d2d2d;
-            border: 1px solid #444;
-            color: #d4d4d4;
-            font-family: monospace;
-            font-size: 1rem;
-            border-radius: 4px;
-            box-sizing: border-box;
-            margin-bottom: 32px;
-            outline: none;
-        }
-
-        input:focus {
-            border-color: #4ec9b0;
-        }
-
-        .date-group {
-            margin-bottom: 28px;
-        }
-
-        .date-label {
-            color: #888;
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 10px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 6px;
-        }
-
-        .command-row {
-            display: flex;
-            flex-direction: column;
-            padding: 8px 0;
-            border-bottom: 1px solid #2a2a2a;
-        }
-
-        .command-top {
-            display: flex;
-            gap: 20px;
-        }
-
-        .time {
-            color: #888;
-            min-width: 55px;
-            font-size: 0.85rem;
-            padding-top: 1px;
-        }
-
-        .text {
-            color: #9cdcfe;
-        }
-
-        .workdir {
-            color: #555;
-            font-size: 0.78rem;
-            margin-left: 75px;  /* aligns under the command text, past the time column */
-            margin-top: 2px;
-        }
-
-        .summary-box {
-            background: #2d2d2d;
-            border: 1px solid #444;
-            border-radius: 6px;
-            padding: 16px 20px;
-            margin-bottom: 32px;
-        }
-
         .summary-box h2 {
             color: #4ec9b0;
-            font-size: 0.85rem;
+            font-size: 0.72rem;
             text-transform: uppercase;
-            letter-spacing: 1px;
-            margin: 0 0 14px 0;
+            letter-spacing: 2px;
+            margin-bottom: 16px;
         }
-
         .summary-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 14px;
+            gap: 12px;
         }
-
         .stat {
-            background: #1e1e1e;
-            border-radius: 4px;
-            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 6px;
+            padding: 12px 14px;
         }
+        .stat-label { color: #484f58; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+        .stat-value { color: #e6edf3; font-size: 1rem; }
+        .topics     { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+        .topic-tag  { background: #1f3a2e; color: #4ec9b0; border: 1px solid #2ea04326; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; }
 
-        .stat-label {
-            color: #888;
-            font-size: 0.75rem;
-            margin-bottom: 4px;
+        /* ── Search + Filters ── */
+        .search-wrap { position: relative; margin-bottom: 12px; }
+        .search-wrap input {
+            width: 100%;
+            padding: 10px 14px 10px 36px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            border-radius: 6px;
+            outline: none;
+            transition: border-color 0.15s;
         }
+        .search-wrap input:focus { border-color: #4ec9b0; }
+        .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #484f58; font-size: 0.85rem; pointer-events: none; }
 
-        .stat-value {
-            color: #d4d4d4;
-            font-size: 0.95rem;
-        }
-
-        .topics {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-            margin-top: 4px;
-        }
-
-        .filters {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 24px;
-        }
-
+        .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 28px; }
         .filter-btn {
-            background: #2d2d2d;
-            border: 1px solid #444;
-            color: #888;
-            font-family: monospace;
-            font-size: 0.8rem;
-            padding: 4px 12px;
-            border-radius: 3px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            color: #484f58;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            padding: 3px 12px;
+            border-radius: 12px;
             cursor: pointer;
+            transition: all 0.15s;
+        }
+        .filter-btn:hover  { border-color: #4ec9b0; color: #4ec9b0; }
+        .filter-btn.active { background: #1f3a2e; border-color: #4ec9b0; color: #4ec9b0; }
+
+        /* ── Session Card ── */
+        .session-card {
+            background: #161b22;
+            border: 1px solid #21262d;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            overflow: hidden;
         }
 
-        /* active = teal border + teal text */
-        .filter-btn.active {
-            border-color: #4ec9b0;
-            color: #4ec9b0;
+        .session-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 18px;
+            cursor: pointer;
+            user-select: none;
+            border-bottom: 1px solid #21262d;
+            transition: background 0.15s;
+        }
+        .session-header:hover { background: #1c2128; }
+
+        .session-left { display: flex; flex-direction: column; gap: 6px; }
+
+        .session-time {
+            color: #e6edf3;
+            font-size: 0.85rem;
         }
 
-        .empty {
-            color: #555;
-            margin-top: 40px;
-            text-align: center;
+        .session-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
+
+        .session-stat {
+            color: #484f58;
+            font-size: 0.72rem;
+        }
+
+        .session-cats { display: flex; gap: 5px; flex-wrap: wrap; }
+
+        .session-toggle {
+            color: #484f58;
+            font-size: 0.8rem;
+            transition: transform 0.2s;
+        }
+        .session-toggle.open { transform: rotate(180deg); }
+
+        /* ── Command Row ── */
+        .session-commands { display: none; }
+        .session-commands.open { display: block; }
+
+        .command-row {
+            display: grid;
+            grid-template-columns: 52px 1fr;
+            gap: 0 16px;
+            padding: 9px 18px;
+            border-bottom: 1px solid #0d1117;
+        }
+        .command-row:last-child { border-bottom: none; }
+        .command-row:hover { background: #1c2128; }
+
+        .time { color: #484f58; font-size: 0.78rem; padding-top: 2px; white-space: nowrap; }
+
+        .command-body  { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .command-main  { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .cmd-text      { color: #79c0ff; font-size: 0.88rem; word-break: break-all; }
+
+        .cat-badge      { font-size: 0.65rem; padding: 1px 7px; border-radius: 10px; white-space: nowrap; flex-shrink: 0; }
+        .cat-git        { background: #1a2e1a; color: #56d364; border: 1px solid #2ea04326; }
+        .cat-docker     { background: #0d2137; color: #58a6ff; border: 1px solid #1f6feb26; }
+        .cat-kubernetes { background: #1a1a2e; color: #a5a0ff; border: 1px solid #6e40c926; }
+        .cat-terraform  { background: #2e1a2e; color: #d2a8ff; border: 1px solid #8957e526; }
+        .cat-build      { background: #2e2a0d; color: #e3b341; border: 1px solid #9e6a0326; }
+        .cat-files      { background: #1a1a1a; color: #8b949e; border: 1px solid #30363d; }
+        .cat-network    { background: #2e1a1a; color: #ffa198; border: 1px solid #da363326; }
+        .cat-editor     { background: #1a2a2e; color: #76e3ea; border: 1px solid #1b7c8326; }
+        .cat-other      { background: #1a1a1a; color: #6e7681; border: 1px solid #21262d; }
+
+        .meta-row  { display: flex; gap: 14px; flex-wrap: wrap; }
+        .meta-item { color: #484f58; font-size: 0.72rem; display: flex; align-items: center; gap: 4px; }
+        .meta-item span { color: #6e7681; }
+
+        .empty { color: #484f58; text-align: center; padding: 60px 0; font-size: 0.85rem; }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0d1117; }
+        ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
     </style>
 </head>
 <body>
 
-<h1>⚡ Notes Buddy</h1>
+<div class="header">
+    <h1>⚡ Notes Buddy</h1>
+    <p>your engineering journal — every command, every directory, every repo</p>
+</div>
 
 <div class="summary-box">
     <h2>Today's Summary</h2>
@@ -168,6 +186,10 @@
         <div class="stat">
             <div class="stat-label">Commands Run</div>
             <div class="stat-value" id="totalCommands">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Sessions</div>
+            <div class="stat-value" id="totalSessions">—</div>
         </div>
         <div class="stat">
             <div class="stat-label">Most Used</div>
@@ -180,147 +202,167 @@
     </div>
 </div>
 
-<input type="text" id="search" placeholder="Search commands..." oninput="applyFilters()" />
+<div class="search-wrap">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="search" placeholder="Search commands..." oninput="applyFilters()" />
+</div>
 
 <div class="filters" id="filters"></div>
 
 <div id="output"></div>
 
 <script>
-    let allCommands = [];
-    let activeFilters = new Set(); // tracks which category buttons are active
+    let allSessions = [];
+    let activeFilters = new Set();
 
     async function load() {
-        const res = await fetch('/commands/all');
-        allCommands = await res.json();
-        buildFilterButtons(); // build buttons from actual categories in data
-        applyFilters();       // render with current filter state
-        loadSummary();
-    }
+        const [sessRes, sumRes] = await Promise.all([fetch('/sessions'), fetch('/summary')]);
+        allSessions = await sessRes.json();
+        const summary = await sumRes.json();
 
-    function buildFilterButtons() {
-        // collect every unique category present in loaded commands
-        const categories = [...new Set(allCommands.map(c => c.category).filter(Boolean))].sort();
+        document.getElementById('totalCommands').textContent = summary.totalCommands;
+        document.getElementById('mostUsed').textContent      = summary.mostUsed;
 
-        const filtersEl = document.getElementById('filters');
+        // count today's sessions
+        const today = new Date().toLocaleDateString('en-CA');
+        const todaySessions = allSessions.filter(s => {
+            return new Date(s.startTime).toLocaleDateString('en-CA') === today;
+        });
+        document.getElementById('totalSessions').textContent = todaySessions.length;
 
-        // "all" button clears every active filter — always shown first
-        const clearBtn = `<button class="filter-btn ${activeFilters.size === 0 ? 'active' : ''}" onclick="clearFilters()">all</button>`;
+        const topicsEl = document.getElementById('topics');
+        topicsEl.innerHTML = summary.topicsTouched.length
+            ? summary.topicsTouched.map(t => `<span class="topic-tag">${escapeHtml(t)}</span>`).join('')
+            : '<span style="color:#484f58">none yet</span>';
 
-        const catBtns = categories.map(cat => {
-            const isActive = activeFilters.has(cat);
-            return `<button class="filter-btn ${isActive ? 'active' : ''}" onclick="toggleFilter('${cat}')">${cat}</button>`;
-        }).join('');
-
-        filtersEl.innerHTML = clearBtn + catBtns;
-    }
-
-    function clearFilters() {
-        activeFilters.clear();  // empty the Set — size becomes 0 → applyFilters shows everything
         buildFilterButtons();
         applyFilters();
     }
 
-    function toggleFilter(category) {
-        // if already active → remove it (deselect), else add it
-        if (activeFilters.has(category)) {
-            activeFilters.delete(category);
-        } else {
-            activeFilters.add(category);
-        }
-        buildFilterButtons(); // re-render buttons so active state updates
-        applyFilters();
+    function buildFilterButtons() {
+        const cats = new Set();
+        allSessions.forEach(s => (s.categories || []).forEach(c => cats.add(c)));
+        const sorted = [...cats].sort();
+
+        const filtersEl = document.getElementById('filters');
+        const clearBtn  = `<button class="filter-btn ${activeFilters.size === 0 ? 'active' : ''}" onclick="clearFilters()">all</button>`;
+        const catBtns   = sorted.map(cat =>
+            `<button class="filter-btn ${activeFilters.has(cat) ? 'active' : ''}" onclick="toggleFilter('${cat}')">${cat}</button>`
+        ).join('');
+        filtersEl.innerHTML = clearBtn + catBtns;
     }
 
-    // single source of truth for filtering — always combines search + category filters
+    function clearFilters()       { activeFilters.clear(); buildFilterButtons(); applyFilters(); }
+    function toggleFilter(cat)    { activeFilters.has(cat) ? activeFilters.delete(cat) : activeFilters.add(cat); buildFilterButtons(); applyFilters(); }
+
     function applyFilters() {
         const query = document.getElementById('search').value.toLowerCase();
 
-        const filtered = allCommands.filter(c => {
-            const matchesSearch = c.text.toLowerCase().includes(query);
-            // if no filters active → show all, else command must match one of active filters
-            const matchesCategory = activeFilters.size === 0 || activeFilters.has(c.category);
-            return matchesSearch && matchesCategory;
-        });
+        const filtered = allSessions.map(session => {
+            // filter commands inside session by search + category
+            const cmds = session.commands.filter(c => {
+                const matchSearch = c.text.toLowerCase().includes(query);
+                const matchCat    = activeFilters.size === 0 || activeFilters.has(c.category);
+                return matchSearch && matchCat;
+            });
+            return { ...session, commands: cmds };
+        }).filter(s => s.commands.length > 0);
 
         render(filtered);
     }
 
-    async function loadSummary() {
-        const res = await fetch('/summary');
-        const data = await res.json();
-
-        document.getElementById('totalCommands').textContent = data.totalCommands;
-        document.getElementById('mostUsed').textContent = data.mostUsed;
-
-        const topicsEl = document.getElementById('topics');
-        topicsEl.innerHTML = data.topicsTouched.length
-            ? data.topicsTouched.map(t => `<span class="topic-tag">${t}</span>`).join('')
-            : '<span style="color:#555">none yet</span>';
-    }
-
-
-
-    function render(commands) {
+    function render(sessions) {
         const output = document.getElementById('output');
 
-        if (commands.length === 0) {
-            output.innerHTML = '<div class="empty">No commands found.</div>';
+        if (sessions.length === 0) {
+            output.innerHTML = '<div class="empty">no commands found</div>';
             return;
         }
 
-        // group commands by date
-        const groups = {};
-        for (const cmd of commands) {
-            const date = cmd.savedAt.split('T')[0]; // "2026-06-27T01:02" → "2026-06-27"
-            if (!groups[date]) groups[date] = [];
-            groups[date].push(cmd);
-        }
-
         let html = '';
-        // show newest date first
-        for (const date of Object.keys(groups).sort().reverse()) {
-            html += `<div class="date-group">`;
-            html += `<div class="date-label">${formatDate(date)}</div>`;
+        sessions.forEach((session, idx) => {
+            const start    = new Date(session.startTime);
+            const end      = new Date(session.endTime);
+            const startStr = fmt(start);
+            const endStr   = fmt(end);
+            const dur      = formatDuration(session.durationMins);
+            const dateStr  = start.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
-            // show newest command first within each day
-            for (const cmd of groups[date].reverse()) {
-                const time = cmd.savedAt.split('T')[1].substring(0, 5);
-                const dir = cmd.workingDir && cmd.workingDir !== 'unknown'
-                    ? `<div class="workdir">📁 ${escapeHtml(cmd.workingDir)}</div>`
-                    : '';
-                const repo = cmd.repoName && cmd.repoName !== 'none'
-                    ? `<div class="workdir">🔀 ${escapeHtml(cmd.repoName)}</div>`
-                    : '';
-                html += `
-                    <div class="command-row">
-                        <div class="command-top">
-                            <span class="time">${time}</span>
-                            <span class="text">${escapeHtml(cmd.text)}</span>
+            const catBadges = (session.categories || [])
+                .map(c => `<span class="cat-badge cat-${c}">${c}</span>`).join('');
+
+            html += `
+            <div class="session-card">
+                <div class="session-header" onclick="toggleSession(${idx})">
+                    <div class="session-left">
+                        <div class="session-time">${dateStr} &nbsp;·&nbsp; ${startStr} → ${endStr} &nbsp;·&nbsp; ${dur}</div>
+                        <div class="session-meta">
+                            <span class="session-stat">${session.commands.length} commands</span>
+                            <div class="session-cats">${catBadges}</div>
                         </div>
-                        ${dir}${repo}
-                    </div>`;
+                    </div>
+                    <span class="session-toggle" id="toggle-${idx}">▼</span>
+                </div>
+                <div class="session-commands" id="cmds-${idx}">`;
+
+            for (const cmd of session.commands) {
+                const t     = fmt(new Date(cmd.savedAt));
+                const cat   = cmd.category || 'other';
+                const badge = `<span class="cat-badge cat-${cat}">${cat}</span>`;
+
+                const dirPart  = cmd.workingDir && cmd.workingDir !== 'unknown'
+                    ? `<span class="meta-item">📁 <span>${escapeHtml(cmd.workingDir)}</span></span>` : '';
+                const repoPart = cmd.repoName && cmd.repoName !== 'none'
+                    ? `<span class="meta-item">🔀 <span>${escapeHtml(cmd.repoName)}</span></span>` : '';
+                const metaRow  = (dirPart || repoPart) ? `<div class="meta-row">${dirPart}${repoPart}</div>` : '';
+
+                html += `
+                <div class="command-row">
+                    <span class="time">${t}</span>
+                    <div class="command-body">
+                        <div class="command-main">
+                            <span class="cmd-text">${escapeHtml(cmd.text)}</span>
+                            ${badge}
+                        </div>
+                        ${metaRow}
+                    </div>
+                </div>`;
             }
 
-            html += `</div>`;
-        }
+            html += `</div></div>`;
+        });
 
         output.innerHTML = html;
+
+        // auto-expand the first (most recent) session
+        toggleSession(0);
     }
 
-    function formatDate(dateStr) {
-        const d = new Date(dateStr);
-        return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    function toggleSession(idx) {
+        const cmds   = document.getElementById(`cmds-${idx}`);
+        const toggle = document.getElementById(`toggle-${idx}`);
+        if (!cmds) return;
+        cmds.classList.toggle('open');
+        toggle.classList.toggle('open');
     }
 
-    // prevents XSS — if a command contains <script> it won't execute in the browser
+    function fmt(date) {
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function formatDuration(mins) {
+        if (mins < 1)  return '< 1 min';
+        if (mins < 60) return `${mins}m`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+
     function escapeHtml(text) {
-        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     load();
-
-    // auto-refresh every 15 seconds so new commands appear without manual reload
     setInterval(load, 15000);
 </script>
 

@@ -21,5 +21,6 @@ EXPOSE 9098
 
 #Mount volumes
 VOLUME /root
+VOLUME /app/notesbuddy-db
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

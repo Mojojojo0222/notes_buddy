@@ -32,4 +32,5 @@ public class Command {
     public String getWorkingDir() { return workingDir; }
     public String getRepoName() { return repoName; }
     public LocalDateTime getSavedAt() { return savedAt; }
+    public void setSavedAt(LocalDateTime savedAt) { this.savedAt = savedAt; }
 }

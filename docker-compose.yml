@@ -1,0 +1,35 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notesbuddy
+      POSTGRES_USER: notesbuddy
+      POSTGRES_PASSWORD: notesbuddy
+    volumes:
+      - postgres-data:/var/lib/postgresql/data   # data survives container restarts
+    ports:
+      - "5432:5432"                              # expose so you can connect with a DB client locally
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notesbuddy"]
+      interval: 5s
+      retries: 5
+
+  notes-buddy:
+    image: notes-buddy
+    ports:
+      - "9098:9098"
+    environment:
+      PORT: 9098
+      DB_HOST: postgres        # matches the service name above — Docker DNS resolves this
+      DB_NAME: notesbuddy
+      DB_USER: notesbuddy
+      DB_PASS: notesbuddy
+    volumes:
+      - "$HOME/.notes_buddy_log:/root/.notes_buddy_log"
+    depends_on:
+      postgres:
+        condition: service_healthy   # waits for postgres to be ready before starting app
+
+volumes:
+  postgres-data:

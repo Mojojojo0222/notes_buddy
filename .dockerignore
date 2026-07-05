@@ -5,3 +5,4 @@ docs/
 .gitignore
 notesbuddy-db.mv.db
 notesbuddy-db.trace.db
+notesbuddy-db/
