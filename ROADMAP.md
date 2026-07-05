@@ -37,14 +37,17 @@
 - [x] Spring Boot Actuator — /actuator/health for K8s liveness + readiness probes
 - [x] Externalized config via env vars — PORT, DB_PATH, H2_CONSOLE
 - [x] "All" button to clear all active category filters
+- [x] PostgreSQL migration (docker-compose with Spring Boot + Postgres containers)
+- [x] Session detection — group commands by 30-min idle gap (SessionService)
+- [x] Session view on dashboard — collapsible session cards with duration + categories
+- [x] Timestamp in log format — exact real time per command, no more same-time bug
 
 ---
 
-## 🔲 Month 2 — Better Storage
+## 🔲 Month 2 — Remaining
 
-- [ ] Switch from H2 to PostgreSQL
-- [ ] Session detection — group commands by 30-min idle gap
-- [ ] Session view — "what did I do in this session"
+- [ ] Store exit codes (requires bash change: `echo $?` after command)
+- [ ] Tag commands manually from the UI
 
 ---
 
