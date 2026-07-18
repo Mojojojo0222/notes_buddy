@@ -8,6 +8,7 @@
 | Day 3 | Working directory, clean log file, bash fix | [day3/day3-notes.md](day3/day3-notes.md) |
 | Day 4 | Repo name tracking, filter buttons, Docker | [day4/day4-notes.md](day4/day4-notes.md) |
 | Day 5 | Actuator health endpoint, env var config, clear filters | [day5/day5-notes.md](day5/day5-notes.md) |
+| Day 6 | EKS deployment, ECR, stress test, all K8s problems + fixes | [day6-eks/day6-eks-notes.md](day6-eks/day6-eks-notes.md) |
 
 ---
 
