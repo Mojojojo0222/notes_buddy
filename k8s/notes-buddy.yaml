@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notes-buddy
+  namespace: notes-buddy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notes-buddy
+  template:
+    metadata:
+      labels:
+        app: notes-buddy
+    spec:
+      containers:
+        - name: notes-buddy
+          image: 083777493383.dkr.ecr.ap-south-1.amazonaws.com/notes-buddy:latest
+          ports:
+            - containerPort: 9098
+          envFrom:
+            - configMapRef:
+                name: notes-buddy-config
+          env:
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: notes-buddy-secret
+                  key: DB_PASS
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9098
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 9098
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notes-buddy-service
+  namespace: notes-buddy
+spec:
+  type: LoadBalancer
+  selector:
+    app: notes-buddy
+  ports:
+    - port: 80
+      targetPort: 9098

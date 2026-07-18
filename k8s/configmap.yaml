@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notes-buddy-config
+  namespace: notes-buddy
+data:
+  PORT: "9098"
+  DB_HOST: "postgres-service"
+  DB_NAME: "notesbuddy"
+  DB_USER: "notesbuddy"
+  H2_CONSOLE: "false"
