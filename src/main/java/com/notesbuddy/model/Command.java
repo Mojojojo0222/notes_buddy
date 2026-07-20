@@ -10,8 +10,10 @@ public class Command {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(length = 2000)
     private String text;
     private String category;
+    @Column(length = 1000)
     private String workingDir;
     private String repoName;       // git repo name, "none" if not inside a git repo
     private LocalDateTime savedAt;
