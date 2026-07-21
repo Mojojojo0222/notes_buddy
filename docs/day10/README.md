@@ -1,192 +1,398 @@
-# Day 10 — GitHub Actions CI/CD + OIDC Authentication
+# Days 9-10: Terraform IaC + GitHub Actions CI/CD
 
-## What We Built
-A fully automated CI/CD pipeline that runs on every push to `main`:
-1. Build Docker image
-2. Push to Amazon ECR
-3. Deploy to EKS via rolling update
+## What We Built This Session
 
-**No static AWS keys stored anywhere.** Authentication uses OIDC (OpenID Connect) — GitHub Actions assumes an IAM role directly using short-lived tokens.
+### Day 9 — Terraform Infrastructure as Code
+Replaced all manual `eksctl` + `aws cli` with **28 Terraform resources** across 3 modules.
+
+```
+terraform/
+├── main.tf              # Root — calls all modules + GitHub OIDC resources
+├── variables.tf         # cluster_name, instance_type, node counts
+├── outputs.tf           # cluster_endpoint, ecr_repository_url, kubeconfig_command
+├── versions.tf          # AWS 5.x, TLS 4.x, S3 backend + DynamoDB locking
+└── modules/
+    ├── vpc/             # VPC (192.168.0.0/16) + 2 public subnets + IGW + route table
+    ├── eks/             # IAM (cluster + node + IRSA) + cluster + node group + OIDC + addons
+    └── ecr/             # ECR repo + lifecycle policy (keep last 10 images)
+```
+
+**What each module creates:**
+| Module | Resources | Purpose |
+|--------|-----------|---------|
+| VPC | 6 | VPC, IGW, 2 subnets, route table, 2 route table assocs |
+| EKS | 16 | 3 IAM roles, 8 policy attachments, cluster, node group, OIDC, 2 addons |
+| ECR | 2 | Repository + lifecycle policy |
+| Root | 4 | GitHub OIDC provider, IAM role, 2 inline policies (ecr_push, eks_describe) |
+
+### Day 10 — GitHub Actions CI/CD Pipeline
+Every push to `main` automatically:
+1. Builds Docker image → 2. Pushes to ECR → 3. Deploys to EKS via rolling update
+
+**No static AWS keys.** Authentication uses OIDC — GitHub Actions assumes an IAM role directly via short-lived tokens.
 
 ---
 
-## Architecture
+## End-to-End Architecture
 
 ```
-Git Push to main
-    │
+Your Terminal (Git Bash)
+    │ PROMPT_COMMAND → ~/.notes_buddy_log (local backup)
+    │ curl --data-urlencode POST → EKS /ingest (real-time)
     ▼
-GitHub Actions Workflow (.github/workflows/deploy.yml)
-    │
-    ├── 1. Checkout code
-    ├── 2. Configure AWS credentials via OIDC
-    │      ├── GitHub issues ID token
-    │      ├── AWS verifies token against OIDC provider
-    │      └── GitHub Actions assumes IAM role (notes-buddy-github-actions-role)
-    ├── 3. Login to ECR
-    ├── 4. Build Docker image (tagged with commit SHA + latest)
-    ├── 5. Push image to ECR
-    ├── 6. Update kubeconfig (aws eks update-kubeconfig)
-    ├── 7. kubectl set image (rolling update)
-    └── 8. kubectl rollout status (verify deployment)
-```
-
----
-
-## Components Created
-
-### 1. GitHub OIDC Provider (AWS IAM Identity Provider)
-- URL: `https://token.actions.githubusercontent.com`
-- Audience: `sts.amazonaws.com`
-- Purpose: Allows AWS to trust tokens issued by GitHub Actions
-
-### 2. IAM Role: `notes-buddy-github-actions-role`
-**Trust Policy** — who can assume this role:
-```json
-{
-  "Effect": "Allow",
-  "Principal": {
-    "Federated": "arn:aws:iam::083777493383:oidc-provider/token.actions.githubusercontent.com"
-  },
-  "Action": "sts:AssumeRoleWithWebIdentity",
-  "Condition": {
-    "StringEquals": {
-      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-    },
-    "StringLike": {
-      "token.actions.githubusercontent.com:sub": "repo:Mojojojo0222/notes_buddy:*"
-    }
-  }
-}
-```
-- `StringLike` with `*` — allows any branch, tag, or PR to deploy
-- For production: restrict to `ref:refs:heads/main` instead of `*`
-
-**Permissions (two inline policies):**
-| Policy | Actions | Why |
-|--------|---------|-----|
-| `ecr_push` | `ecr:GetAuthorizationToken`, `BatchCheckLayerAvailability`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `PutImage`, `BatchGetImage`, `DescribeRepositories`, `GetRepositoryPolicy`, `ListImages` | Push Docker images to ECR |
-| `eks_describe` | `eks:DescribeCluster`, `eks:ListClusters` | Generate kubeconfig for kubectl |
-
-### 3. Workflow File (`.github/workflows/deploy.yml`)
-```yaml
-name: Deploy to EKS
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:     # manual trigger from GitHub UI
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write    # REQUIRED for OIDC
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::083777493383:role/notes-buddy-github-actions-role
-          aws-region: ap-south-1
-      - uses: aws-actions/amazon-ecr-login@v2
-      - run: docker build -t $REGISTRY/$REPO:$SHA .
-      - run: docker push $REGISTRY/$REPO:$SHA
-      - run: aws eks update-kubeconfig --name notes-buddy
-      - run: kubectl set image deployment/notes-buddy -n notes-buddy notes-buddy=$REGISTRY/$REPO:$SHA
-      - run: kubectl rollout status deployment/notes-buddy -n notes-buddy --timeout=120s
+┌─────────────────────────────────────────────────┐
+│              Amazon EKS (ap-south-1)             │
+│                                                  │
+│  ┌─────────────────┐    ┌────────────────────┐  │
+│  │  ALB (port 80)   │───▶│  Notes Buddy App   │  │
+│  │  LoadBalancer    │    │  :9098             │  │
+│  └─────────────────┘    │  /actuator/health  │  │
+│                          │  /commands/all     │  │
+│                          │  /summary          │  │
+│                          │  /sessions         │  │
+│                          │  POST /ingest      │  │
+│                          └───────┬────────────┘  │
+│                                  │                │
+│                          ┌───────▼────────────┐  │
+│                          │  PostgreSQL 16      │  │
+│                          │  EBS gp2 1Gi        │  │
+│                          │  fsGroup: 999       │  │
+│                          │  subPath: pgdata    │  │
+│                          └────────────────────┘  │
+│                                                  │
+│  ┌────────────────────────────────────────────┐  │
+│  │  EBS CSI (IRSA)  │  CloudWatch Agent       │  │
+│  │  HPA (CPU 50%)   │  fluent-bit             │  │
+│  └────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+              ▲
+              │ OIDC (no keys)
+┌─────────────────────────────────────────────────┐
+│            GitHub Actions                        │
+│  Push main → Build → Push ECR → kubectl set     │
+│  IAM role: notes-buddy-github-actions-role       │
+└─────────────────────────────────────────────────┘
+              ▲
+              │ terraform apply
+┌─────────────────────────────────────────────────┐
+│            Terraform (S3 remote state)           │
+│  28 resources, DynamoDB locking                  │
+│  State: s3://notes-buddy-terraform-state-*       │
+└─────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Problems Hit and Fixed
 
-### Problem 1: OIDC `sub` Condition — `StringEquals` vs `StringLike`
-**Issue:** Initial attempt used `StringEquals` with `repo:owner/name:ref:refs/heads/main` — this only allowed pushes to `main` branch. But we also wanted `workflow_dispatch` and future tag-based deployments.
+### Problem 1: Terraform Apply Timed Out (15 min)
+**Error:** Process timed out. EBS CSI addon was still creating.
 
-**Fix:** Changed to `StringLike` with value `repo:Mojojojo0222/notes_buddy:*`. The `*` matches any branch, tag, or pull request event.
+**Root cause:** EBS CSI addon installation takes 4-5 minutes on first create. The 15-min timeout was hit.
 
-**Interview takeaway:** The `sub` claim in the OIDC token contains the full GitHub context: `repo:owner/name:ref:refs/heads/main` for branch pushes. Use `StringLike` with appropriate wildcards to control access at the right granularity.
+**Fix:** Ran `terraform apply` again. It showed "already exists" for ECR repo and EBS CSI addon. Fixed with `terraform import` to bring them into state.
 
-### Problem 2: Missing `id-token: write` Permission
-**Issue:** The workflow failed with "unable to get ID token" error.
+**Lesson:** Always check `terraform state list` after a timeout. Resources might have been created but not tracked. Import them rather than destroying and recreating.
 
-**Root cause:** GitHub Actions workflows default to `permissions: read` for `id-token`. OIDC requires `write` permission to request an identity token.
+### Problem 2: State Lock Contention
+**Error:** `Error acquiring the state lock` when running two `terraform import` commands in parallel.
 
-**Fix:** Added `permissions: id-token: write` at the job level.
+**Root cause:** Terraform locks the state file during write operations. Two concurrent processes can't both write.
 
-**Interview takeaway:** This is a common gotcha. Without explicit `id-token: write`, GitHub won't issue the OIDC token that AWS needs to authenticate the workflow.
+**Fix:** Used `-lock=false` on the second import command. The DynamoDB lock table we set up (`notes-buddy-terraform-locks`) prevents this in CI/CD.
 
-### Problem 3: Terraform State Lock Contention
-**Issue:** Two `terraform import` commands ran in parallel and one failed with "state lock" error.
+**Lesson:** Never disable locking in automated pipelines. For emergency manual ops, `-lock=false` is acceptable if you know no other process is running.
 
-**Fix:** Used `-lock=false` on the second import. The lock is held by the first process that acquires it — subsequent processes must wait or skip the lock.
+### Problem 3: EBS CSI CrashLoopBackOff (×2)
+**Error 1:** `no EC2 IMDS role found`
+**Error 2:** `not authorized to perform ec2:DescribeAvailabilityZones`
 
-**Interview takeaway:** Terraform state locking prevents concurrent modifications. In production, DynamoDB is used for locking (we set this up). Never disable locking in CI/CD pipelines — only for emergency manual operations.
+**Root cause (layer 1):** EBS CSI addon installed without IRSA — pods tried IMDS (Instance Metadata Service), which failed because EKS nodes don't have EBS CSI permissions on the instance profile (by design — AWS moved to IRSA).
 
-### Problem 4: EBS CSI CrashLoopBackOff (Legacy from Terraform setup)
-**Issue:** EBS CSI driver pods crashed repeatedly because they had no IAM permissions to call EC2 APIs.
+**Root cause (layer 2):** After setting up IRSA with `AmazonEBSCSIDriverPolicy`, the policy hadn't propagated yet. The pod assumed the correct role but the permissions weren't active — took 15-30 seconds.
 
-**Root cause:** The EBS CSI addon was installed without IRSA — pods tried to use IMDS (Instance Metadata Service) which failed, then fell back to the IRSA annotation which hadn't been set up yet.
+**Fix:**
+```bash
+# 1. Create IAM role with trust policy scoped to ebs-csi-controller-sa
+aws iam create-role --role-name notes-buddy-ebs-csi-role ...
+aws iam attach-role-policy --role-name notes-buddy-ebs-csi-role \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
 
-**Fix (three layers):**
-1. Created IAM role `notes-buddy-ebs-csi-role` with `AmazonEBSCSIDriverPolicy`
-2. Annotated `ebs-csi-controller-sa` service account with `eks.amazonaws.com/role-arn`
-3. Added the role to Terraform EKS module so it's permanent
+# 2. Annotate the service account
+kubectl annotate sa ebs-csi-controller-sa -n kube-system \
+  eks.amazonaws.com/role-arn=arn:aws:iam::083777493383:role/notes-buddy-ebs-csi-role
 
-**Key insight:** The error message changed from "no EC2 IMDS role found" to "not authorized to perform ec2:DescribeAvailabilityZones" after IRSA was working — this told us IRSA was authenticating correctly but the policy hadn't propagated yet (takes 15-30 seconds).
+# 3. Restart the deployment
+kubectl rollout restart deployment ebs-csi-controller -n kube-system
+
+# 4. Wait 30s, then check
+kubectl get pods -n kube-system | grep ebs-csi
+```
+
+**Lesson:** Error messages tell you which layer is failing:
+- `no EC2 IMDS role found` = **Authentication** problem (can't get credentials at all)
+- `not authorized` = **Authorization** problem (got credentials but missing permissions)
+- The shift from one to the other means your fix is working — you just moved to the next layer.
+
+### Problem 4: GitHub Actions OIDC — Missing id-token Permission
+**Error:** `unable to get ID token`
+
+**Root cause:** GitHub Actions defaults `permissions.id-token` to `read`. OIDC token exchange requires `write`.
+
+**Fix:** Added to workflow:
+```yaml
+permissions:
+  id-token: write    # REQUIRED for OIDC
+  contents: read
+```
+
+**Lesson:** This is a deliberate GitHub security decision — prevents workflows from getting identity tokens unless they explicitly ask. Always remember `id-token: write` when using OIDC.
+
+### Problem 5: OIDC Trust Policy — StringEquals vs StringLike
+**Error:** No error — the workflow authenticated but only worked for main branch pushes, not `workflow_dispatch` or tags.
+
+**Root cause:** `StringEquals` requires exact match. `sub` claim is `repo:owner/name:ref:refs/heads/main` for main branch, but different for other triggers.
+
+**Fix:** Changed to `StringLike` with wildcard:
+```json
+"StringLike": {
+  "token.actions.githubusercontent.com:sub": "repo:Mojojojo0222/notes_buddy:*"
+}
+```
+
+**Lesson:** `StringLike` with `*` wildcard allows any branch/tag/PR. For production, restrict to specific branches with `ref:refs/heads/main`.
+
+### Problem 6: kubectl "You must be logged in" on CI/CD
+**Error:**
+```
+kubectl set image deployment/notes-buddy \
+  error: You must be logged in to the server
+  (the server has asked for the client to provide credentials)
+```
+
+**Root cause:** The IAM role `notes-buddy-github-actions-role` was authenticated in AWS (passed `aws eks update-kubeconfig`) but NOT authorized in EKS. EKS has two auth layers:
+1. **AWS IAM** — signs the request (OIDC role handles this ✅)
+2. **aws-auth ConfigMap** — maps IAM principals to K8s users/groups ❌ missing
+
+**Fix (3 components):**
+
+**Component A — Kubernetes Role** (what you can do):
+```yaml
+kind: Role
+metadata:
+  name: github-actions-deployer
+  namespace: notes-buddy
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch", "update", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status"]
+  verbs: ["get"]
+```
+
+**Component B — RoleBinding** (who gets access):
+```yaml
+kind: RoleBinding
+metadata:
+  name: github-actions-deployer-binding
+  namespace: notes-buddy
+subjects:
+- kind: Group
+  name: notes-buddy-deployer
+roleRef:
+  kind: Role
+  name: github-actions-deployer
+```
+
+**Component C — aws-auth ConfigMap** (bridge between IAM and K8s):
+```yaml
+data:
+  mapRoles: |
+    - rolearn: arn:aws:iam::083777493383:role/notes-buddy-node-role
+      groups: [system:bootstrappers, system:nodes]
+    - rolearn: arn:aws:iam::083777493383:role/notes-buddy-github-actions-role
+      username: github-actions-deployer
+      groups: [notes-buddy-deployer]    # ← matches RoleBinding
+```
+
+**The key insight:** `aws eks update-kubeconfig` only means you can *reach* the API server. The `aws-auth` ConfigMap determines what you can *do* once you get there.
+
+### Problem 7: Windows /tmp Path Not Available
+**Error:** `Unable to load paramfile file:///tmp/...` when using `aws iam create-role --assume-role-policy-document file:///tmp/policy.json`
+
+**Root cause:** Git Bash on Windows doesn't have `/tmp` (or it's a different path than Linux expects).
+
+**Fix:** Inline the JSON directly in the command instead of using `file://`:
+```bash
+aws iam create-role \
+  --role-name notes-buddy-ebs-csi-role \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Federated": "arn:aws:iam::ACCOUNT:oidc-provider/..."},
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {...}
+    }]
+  }'
+```
+
+**Lesson:** Windows Git Bash doesn't have Linux-style `/tmp`. Use inline JSON or a Windows path like `C:/Users/...`.
+
+### Problem 8: PostgreSQL NOTICE Messages in CI/CD Output
+**Error (cosmetic):** `NOTICE: relation "command" already exists, skipping`
+**Meaning:** Hibernate's `ddl-auto=update` runs on every startup and tries to create tables that already exist. These are NOTICE-level messages, not errors.
+
+**Fix:** Ignore them. They're harmless. The app works fine. Only worry about ERROR or FATAL messages.
+
+**Lesson:** Not every log message needs fixing. Learn to distinguish between INFO/NOTICE (informational), WARN (something is suboptimal but working), and ERROR (something broke).
+
+### Problem 9: EKS Auth Mode — Access Entries Not Available
+**Error:** `InvalidRequestException: The cluster's authentication mode must be set to [API, API_AND_CONFIG_MAP]`
+
+**Root cause:** The cluster was created with the default `CONFIG_MAP` auth mode. Access Entries (the modern auth mechanism) require `API_AND_CONFIG_MAP` mode.
+
+**Fix:** Stuck with `aws-auth` ConfigMap approach for this cluster. Changing auth mode requires recreating the cluster. Access Entries would be used for new clusters going forward.
+
+**Trade-off:** The `aws-auth` ConfigMap approach is older but battle-tested. Access Entries simplify management but require cluster recreation to enable. For this project, `aws-auth` is fine.
 
 ---
 
-## Interview Questions & Answers
+## IRSA Deep Dive (IAM Roles for Service Accounts)
 
-### Q: "How does your CI/CD pipeline work?"
-**A:** "Every push to main triggers a GitHub Actions workflow. It builds a Docker image, tags it with the commit SHA, pushes to ECR, and runs `kubectl set image` to trigger a rolling update on EKS. No manual steps. The whole pipeline takes about 3-4 minutes."
+### Why IRSA Matters
+Before IRSA, pods inherited the IAM permissions of the node's instance profile. Every pod on the same node had the same AWS permissions — zero isolation. IRSA solved this by letting each pod assume a dedicated IAM role.
 
-### Q: "How do you handle AWS credentials in CI/CD?"
-**A:** "We use OIDC — no static keys. GitHub Actions requests a short-lived identity token, exchanges it for AWS credentials via STS AssumeRoleWithWebIdentity, and the role's trust policy restricts which repo/branch can assume it. Zero credential rotation overhead."
+### How It Works
+```
+Pod (ebs-csi-controller)
+    │
+    ├── 1. Pod has env var: AWS_WEB_IDENTITY_TOKEN_FILE
+    │      (mounted from projected volume by OIDC provider)
+    │
+    ├── 2. Reads token file → sends to STS:AssumeRoleWithWebIdentity
+    │      Token is signed by EKS OIDC issuer
+    │      Contains: service account name + namespace
+    │
+    ├── 3. STS verifies token against OIDC provider
+    │      Checks: token signature, audience (sts.amazonaws.com)
+    │
+    ├── 4. If valid, STS returns temporary AWS credentials
+    │      Scoped to the IAM role's permissions
+    │
+    └── 5. Pod uses these credentials for all AWS API calls
+```
 
-### Q: "What's the difference between OIDC and static access keys?"
-**A:**
-| Aspect | OIDC | Static Keys |
-|--------|------|-------------|
-| Credential lifetime | Minutes (per workflow run) | Months/years (until rotated) |
-| Rotation | Automatic (every run) | Manual (easy to forget) |
-| Leak impact | Low (expires fast) | Critical (full access until revoked) |
-| Setup complexity | One-time (IAM provider + role) | Simple (generate + store in secrets) |
-| Audit trail | Full (which repo, branch, run) | Limited (just the key ID) |
+### What We Set Up
+| Component | Value |
+|-----------|-------|
+| IAM Role | `notes-buddy-ebs-csi-role` |
+| Policy | `AmazonEBSCSIDriverPolicy` (DescribeAvailabilityZones, CreateVolume, AttachVolume, etc.) |
+| Service Account | `ebs-csi-controller-sa` in `kube-system` |
+| Annotation | `eks.amazonaws.com/role-arn=arn:aws:iam::083777493383:role/notes-buddy-ebs-csi-role` |
+| OIDC Provider | Created by Terraform EKS module |
 
-### Q: "How do you handle deployment failures?"
-**A:** "The workflow runs `kubectl rollout status --timeout=120s` after the deployment. If pods don't become ready within 2 minutes, the workflow fails and sends a notification. Rollback is manual — `kubectl rollout undo deployment/notes-buddy -n notes-buddy` to go back to the previous revision, or `kubectl set image` to a known-good image tag."
+### IRSA Trust Policy
+```json
+{
+  "Effect": "Allow",
+  "Principal": {
+    "Federated": "arn:aws:iam::083777493383:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/E4AC7338DB77B2A44EFCE9AD18B0AE26"
+  },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "oidc.eks.ap-south-1.amazonaws.com/id/E4AC7338DB77B2A44EFCE9AD18B0AE26:aud": "sts.amazonaws.com",
+      "oidc.eks.ap-south-1.amazonaws.com/id/E4AC7338DB77B2A44EFCE9AD18B0AE26:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+    }
+  }
+}
+```
 
-### Q: "What's in your Docker image and how do you version it?"
-**A:** "We use multi-stage Docker builds. The `pom.xml` is copied first to cache Maven dependencies. The image is tagged with the Git commit SHA (unique, traceable) and `latest` (convenient for dev). ECR lifecycle policy keeps only the last 10 images to save storage."
+**The `sub` condition** is the security boundary: `system:serviceaccount:kube-system:ebs-csi-controller-sa` — only the EBS CSI driver's service account in kube-system can assume this role. No other pod, not even in the same namespace, can use it.
 
 ---
 
-## Key Learnings
+## Remote Terraform State (S3 + DynamoDB)
 
-### GitHub Actions + AWS OIDC
-1. **OIDC > static keys** — Every company interview asks about secrets management. OIDC is the modern answer.
-2. **`permissions: id-token: write`** is mandatory — GitHub won't issue tokens without it.
-3. **`workflow_dispatch`** trigger — allows manual runs from GitHub UI. Useful for debugging and one-off deployments.
-4. **`aws-actions/configure-aws-credentials@v4`** handles the entire OIDC exchange — just pass the role ARN.
-5. **`amazon-ecr-login@v2`** wraps `docker login` with the ECR registry URL automatically.
+### Why Remote State
+Local `terraform.tfstate` is fine for one person. For team collaboration (or disaster recovery), state must be stored remotely.
 
-### Terraform + IAM
-1. **IAM roles can have multiple inline policies** — separate ECR and EKS policies for least privilege.
-2. **OIDC provider is global (IAM)** — created once, available across all regions.
-3. **GitHub's OIDC thumbprint** is `1c58a3a8518e8759bf075b76b750d4f2df264fcd` — stable, rarely changes.
+### What We Set Up
+```hcl
+backend "s3" {
+  bucket         = "notes-buddy-terraform-state-083777493383"
+  key            = "notes-buddy/terraform.tfstate"
+  region         = "ap-south-1"
+  dynamodb_table = "notes-buddy-terraform-locks"
+  encrypt        = true
+}
+```
 
-### Kubernetes Deployments
-1. **`kubectl set image`** updates the deployment's container image and triggers a rolling update — doesn't restart the pod, just updates the spec.
-2. **`kubectl rollout status`** blocks until the deployment is complete or times out — essential for CI/CD verification.
-3. **Rolling update strategy** — K8s replaces pods one at a time, ensuring zero downtime if health probes are configured.
+| Component | Purpose |
+|-----------|---------|
+| **S3 bucket** | Stores the state file. Versioning enabled — every change is tracked |
+| **SSE-AES256** | Encryption at rest. State files contain secrets (DB passwords, IPs) |
+| **Public access block** | No one can read the state file except authenticated AWS principals |
+| **DynamoDB table** | State locking — prevents two people from running `terraform apply` simultaneously |
+| **PAY_PER_REQUEST** | Costs pennies per month. No need to provision read/write capacity |
+
+### Migration
+```bash
+# Before: local terraform.tfstate
+# After: S3 backend
+terraform init -migrate-state -force-copy
+```
+
+Terraform copies the local state to S3 on `init`. From that point, every `plan` and `apply` reads/writes to S3.
 
 ---
 
-## Status
-- CI/CD pipeline live on GitHub
-- Every push to main → build → push → deploy automatically
-- OIDC authentication — no hardcoded keys
-- Terraform managing the OIDC provider + IAM role (4 resources)
-- Next: ArgoCD (GitOps — Day 11)
+## Docs Created This Session
+
+| File | Lines | What It Covers |
+|------|-------|----------------|
+| `docs/day10/README.md` | ~400 | This file — full Day 9+10 documentation |
+| `docs/day10/CI-CD-FIX-GUIDE.md` | 331 | EKS auth fix: aws-auth + RBAC + troubleshooting |
+| `docs/day9/README.md` | ~150 | Day 9 Terraform deep-dive |
+| `docs/RUNBOOK.md` | 564 | Complete run guide: local/Docker/EKS + 13 troubleshooting scenarios |
+| `docs/INTERVIEW_STORY.md` | 428 | Full project story + interview answers for every technology |
+
+---
+
+## State of the Project After Days 9-10
+
+```
+App:           Spring Boot + PostgreSQL
+Container:     Docker + ECR (multi-stage, ~180MB)
+Orchestration: Kubernetes (EKS 1.31, 2 t3.small nodes)
+Autoscaling:   HPA (CPU 50%, 1-4 replicas)
+Observability: CloudWatch Container Insights
+IaC:           Terraform (28 resources, S3 state + DynamoDB locks)
+CI/CD:         GitHub Actions (OIDC auth, build-push-deploy)
+Security:      IRSA per service account, OIDC for CI/CD
+DNS:           Route53 (via ALB — ac668cb9220164bd1ad26559418741a4-749616980.ap-south-1.elb.amazonaws.com)
+```
+
+### Active URLs
+- **Dashboard:** http://ac668cb9220164bd1ad26559418741a4-749616980.ap-south-1.elb.amazonaws.com
+- **Health:** http://ac668cb9220164bd1ad26559418741a4-749616980.ap-south-1.elb.amazonaws.com/actuator/health
+- **ECR:** 083777493383.dkr.ecr.ap-south-1.amazonaws.com/notes-buddy
+
+### Terraform Resources: 28
+```
+module.vpc:        6
+module.eks:        16
+module.ecr:        2
+root (GitHub OIDC): 4
+```
+
+### Next Up
+| Day | Topic | What You'll Learn |
+|-----|-------|-------------------|
+| 11 | **ArgoCD** | GitOps — Git as source of truth, sync policies, rollback = git revert |
+| 12 | **Karpenter** | Node autoscaling — provision nodes in 30s, spot instances (70% cheaper) |
