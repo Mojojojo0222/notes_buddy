@@ -1,25 +1,25 @@
-# Maven build output
-target/
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup
 
-# H2 database files — these are local only, never commit
-*.mv.db
-*.trace.db
+# Notes buddy data
+notesbuddy-db/
+~/.notes_buddy_log
 
-# IDE files
+# IDE
+.vscode/
 .idea/
 *.iml
-.vscode/
-*.code-workspace
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Spring Boot local config override
-application-local.properties
+# Docker
+.env
 
-# Log files
-*.log
-
-# general purpose file
-AI_CONTEXT.md
+# Private AI context — never pushed
+docs/AI_CONTEXT.md
