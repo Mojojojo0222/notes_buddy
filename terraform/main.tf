@@ -105,3 +105,7 @@ resource "aws_iam_role_policy" "eks_describe" {
     }]
   })
 }
+
+# Note: EKS Access Entries not used — cluster uses CONFIG_MAP auth mode (default)
+# GitHub Actions IAM role is mapped via aws-auth ConfigMap + RBAC Role/RoleBinding
+# See: k8s/rbac-github-actions.yaml and the aws-auth ConfigMap in kube-system
