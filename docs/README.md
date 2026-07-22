@@ -9,6 +9,7 @@
 | Day 4 | Repo name tracking, filter buttons, Docker | [day4/day4-notes.md](day4/day4-notes.md) |
 | Day 5 | Actuator health endpoint, env var config, clear filters | [day5/day5-notes.md](day5/day5-notes.md) |
 | Day 6 | EKS deployment, ECR, stress test, all K8s problems + fixes | [day6-eks/day6-eks-notes.md](day6-eks/day6-eks-notes.md) |
+| Day 11 | Exit codes, tags, timeline, weekly summary, filter persistence | Day 11 notes below |
 
 ---
 
@@ -94,7 +95,12 @@
 |--------|-----|---------|---------|
 | GET | / | static/index.html | HTML page |
 | GET | /commands/all | CommandController.all() | JSON array of all commands |
+| GET | /commands/by-date | CommandController.byDate() | Commands for a specific date |
+| POST | /commands/{id}/tag | CommandController.tagCommand() | "tagged" or 404 |
 | GET | /summary | CommandController.summary() | JSON object with today's stats |
+| GET | /summary/weekly | CommandController.weeklySummary() | JSON with 7-day stats + error count |
+| POST | /ingest | CommandController.ingest() | "saved" or "skipped" |
+| GET | /sessions | CommandController.sessions() | Session-bucketed commands |
 | GET | /h2-console | H2 built-in | SQL browser for debugging |
 
 ---

@@ -162,9 +162,57 @@
         .cat-editor     { background: #1a2a2e; color: #76e3ea; border: 1px solid #1b7c8326; }
         .cat-other      { background: #1a1a1a; color: #6e7681; border: 1px solid #21262d; }
 
+        .exit-code      { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; font-weight: bold; }
+        .exit-code.ok   { color: #3fb950; border: 1px solid #2ea04340; }
+        .exit-code.fail { color: #f85149; border: 1px solid #f8514940; }
+
+        .tag-wrap { display: inline-flex; align-items: center; gap: 4px; }
+        .tag-badge {
+            background: #1c2541; color: #a5d6ff; border: 1px solid #58a6ff40;
+            font-size: 0.65rem; padding: 1px 7px; border-radius: 10px; white-space: nowrap;
+            cursor: pointer; transition: all 0.15s;
+        }
+        .tag-badge:hover { background: #2a3a5e; }
+        .tag-input {
+            background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+            font-family: 'Courier New', monospace; font-size: 0.72rem;
+            padding: 1px 6px; border-radius: 4px; width: 100px; outline: none;
+        }
+        .tag-input:focus { border-color: #4ec9b0; }
+
         .meta-row  { display: flex; gap: 14px; flex-wrap: wrap; }
         .meta-item { color: #484f58; font-size: 0.72rem; display: flex; align-items: center; gap: 4px; }
         .meta-item span { color: #6e7681; }
+
+        /* ── Timeline ── */
+        .timeline-bar {
+            display: flex; align-items: center; gap: 12px;
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 8px; padding: 12px 18px; margin-bottom: 16px;
+        }
+        .timeline-bar label { color: #484f58; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; }
+        .timeline-bar input[type=date] {
+            background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+            font-family: 'Courier New', monospace; font-size: 0.85rem;
+            padding: 6px 10px; border-radius: 6px; outline: none;
+        }
+        .timeline-bar input[type=date]:focus { border-color: #4ec9b0; }
+        .timeline-bar .nav-btn {
+            background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+            font-family: 'Courier New', monospace; font-size: 0.85rem;
+            padding: 4px 12px; border-radius: 6px; cursor: pointer;
+        }
+        .timeline-bar .nav-btn:hover { border-color: #4ec9b0; color: #4ec9b0; }
+        .timeline-bar .nav-btn:disabled { opacity: 0.4; cursor: default; border-color: #30363d; color: #484f58; }
+
+        .weekly-section {
+            background: #161b22; border: 1px solid #30363d;
+            border-radius: 8px; padding: 18px 22px; margin-bottom: 24px;
+        }
+        .weekly-section h2 {
+            color: #4ec9b0; font-size: 0.72rem; text-transform: uppercase;
+            letter-spacing: 2px; margin-bottom: 16px;
+        }
 
         .empty { color: #484f58; text-align: center; padding: 60px 0; font-size: 0.85rem; }
 
@@ -202,6 +250,37 @@
     </div>
 </div>
 
+<div class="weekly-section">
+    <h2>This Week</h2>
+    <div class="summary-grid">
+        <div class="stat">
+            <div class="stat-label">Commands Run</div>
+            <div class="stat-value" id="weeklyTotal">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Most Used</div>
+            <div class="stat-value" id="weeklyMostUsed">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Errors Found</div>
+            <div class="stat-value" id="weeklyErrors">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Categories</div>
+            <div class="topics" id="weeklyTopics"></div>
+        </div>
+    </div>
+</div>
+
+<div class="timeline-bar">
+    <label>📅 Timeline</label>
+    <button class="nav-btn" id="dayPrev" onclick="shiftDay(-1)">‹ Prev</button>
+    <input type="date" id="datePicker" onchange="loadDate()" />
+    <button class="nav-btn" id="dayNext" onclick="shiftDay(1)">Next ›</button>
+    <button class="nav-btn" onclick="selectedDate=new Date().toLocaleDateString('en-CA'); load();">Today</button>
+    <button class="nav-btn" onclick="selectedDate=''; load();">All</button>
+</div>
+
 <div class="search-wrap">
     <span class="search-icon">🔍</span>
     <input type="text" id="search" placeholder="Search commands..." oninput="applyFilters()" />
@@ -213,22 +292,68 @@
 
 <script>
     let allSessions = [];
+    let allCommands = [];
     let activeFilters = new Set();
+    let selectedDate = '';
+
+    loadFilters();
 
     async function load() {
-        const [sessRes, sumRes] = await Promise.all([fetch('/sessions'), fetch('/summary')]);
-        allSessions = await sessRes.json();
+        const datePicker = document.getElementById('datePicker');
+
+        const [sumRes, weeklyRes] = await Promise.all([
+            fetch('/summary'), fetch('/summary/weekly')
+        ]);
         const summary = await sumRes.json();
 
         document.getElementById('totalCommands').textContent = summary.totalCommands;
         document.getElementById('mostUsed').textContent      = summary.mostUsed;
 
-        // count today's sessions
         const today = new Date().toLocaleDateString('en-CA');
-        const todaySessions = allSessions.filter(s => {
-            return new Date(s.startTime).toLocaleDateString('en-CA') === today;
-        });
-        document.getElementById('totalSessions').textContent = todaySessions.length;
+
+        // weekly summary
+        try {
+            const weekly = await weeklyRes.json();
+            document.getElementById('weeklyTotal').textContent    = weekly.totalCommands;
+            document.getElementById('weeklyMostUsed').textContent = weekly.mostUsed;
+            document.getElementById('weeklyErrors').textContent   = weekly.errorCount;
+            const wtEl = document.getElementById('weeklyTopics');
+            wtEl.innerHTML = weekly.topicsTouched.length
+                ? weekly.topicsTouched.map(t => `<span class="topic-tag">${escapeHtml(t)}</span>`).join('')
+                : '<span style="color:#484f58">—</span>';
+        } catch(e) { /* weekly endpoint not available */ }
+
+        // if a date is selected, show that date; otherwise show sessions
+        if (selectedDate) {
+            datePicker.value = selectedDate;
+            const sessRes = await fetch(`/commands/by-date?date=${selectedDate}`);
+            const cmds = await sessRes.json();
+            allSessions = cmds.length > 0 ? [{
+                startTime: cmds[0].savedAt,
+                endTime: cmds[cmds.length-1].savedAt,
+                durationMins: 0,
+                commandCount: cmds.length,
+                categories: [...new Set(cmds.map(c => c.category).filter(Boolean))],
+                commands: cmds
+            }] : [];
+
+            const todaySessions = allSessions.filter(s =>
+                new Date(s.startTime).toLocaleDateString('en-CA') === today
+            );
+            document.getElementById('totalSessions').textContent = todaySessions.length;
+        } else {
+            datePicker.value = today;
+            const sessRes = await fetch('/sessions');
+            allSessions = await sessRes.json();
+            const todaySessions = allSessions.filter(s =>
+                new Date(s.startTime).toLocaleDateString('en-CA') === today
+            );
+            document.getElementById('totalSessions').textContent = todaySessions.length;
+        }
+
+        // flatten all commands for filter buttons
+        allCommands = [];
+        allSessions.forEach(s => (s.commands || []).forEach(c => allCommands.push(c)));
 
         const topicsEl = document.getElementById('topics');
         topicsEl.innerHTML = summary.topicsTouched.length
@@ -237,6 +362,17 @@
 
         buildFilterButtons();
         applyFilters();
+    }
+
+    // ── Filters + localStorage ──
+    function saveFilters() {
+        localStorage.setItem('notesBuddyFilters', JSON.stringify([...activeFilters]));
+    }
+    function loadFilters() {
+        try {
+            const saved = JSON.parse(localStorage.getItem('notesBuddyFilters'));
+            if (saved && Array.isArray(saved)) activeFilters = new Set(saved);
+        } catch(e) {}
     }
 
     function buildFilterButtons() {
@@ -252,16 +388,17 @@
         filtersEl.innerHTML = clearBtn + catBtns;
     }
 
-    function clearFilters()       { activeFilters.clear(); buildFilterButtons(); applyFilters(); }
-    function toggleFilter(cat)    { activeFilters.has(cat) ? activeFilters.delete(cat) : activeFilters.add(cat); buildFilterButtons(); applyFilters(); }
+    function clearFilters()       { activeFilters.clear(); saveFilters(); buildFilterButtons(); applyFilters(); }
+    function toggleFilter(cat)    { activeFilters.has(cat) ? activeFilters.delete(cat) : activeFilters.add(cat); saveFilters(); buildFilterButtons(); applyFilters(); }
 
     function applyFilters() {
         const query = document.getElementById('search').value.toLowerCase();
 
         const filtered = allSessions.map(session => {
-            // filter commands inside session by search + category
             const cmds = session.commands.filter(c => {
-                const matchSearch = c.text.toLowerCase().includes(query);
+                const matchSearch = query === '' ||
+                    c.text.toLowerCase().includes(query) ||
+                    (c.tag && c.tag.toLowerCase().includes(query));
                 const matchCat    = activeFilters.size === 0 || activeFilters.has(c.category);
                 return matchSearch && matchCat;
             });
@@ -271,6 +408,45 @@
         render(filtered);
     }
 
+    // ── Timeline ──
+    function loadDate() {
+        const picker = document.getElementById('datePicker');
+        if (!picker.value) return;
+        selectedDate = picker.value;
+        load();
+    }
+
+    function shiftDay(delta) {
+        const picker = document.getElementById('datePicker');
+        const d = picker.valueAsDate || new Date();
+        d.setDate(d.getDate() + delta);
+        picker.valueAsDate = d;
+        loadDate();
+    }
+
+    // ── Tag editing ──
+    function startTagEdit(cmdId) {
+        const span = document.getElementById(`tag-${cmdId}`);
+        const current = span.textContent === '+' ? '' : span.textContent;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'tag-input';
+        input.value = current;
+        input.placeholder = 'add tag...';
+        input.onblur = () => saveTag(cmdId, input.value);
+        input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { span.style.display=''; input.remove(); } };
+        span.style.display = 'none';
+        span.parentNode.insertBefore(input, span.nextSibling);
+        input.focus();
+    }
+
+    function saveTag(cmdId, tag) {
+        tag = tag.trim();
+        fetch(`/commands/${cmdId}/tag?tag=${encodeURIComponent(tag)}`, { method: 'POST' })
+            .then(() => load());
+    }
+
+    // ── Render ──
     function render(sessions) {
         const output = document.getElementById('output');
 
@@ -291,13 +467,16 @@
             const catBadges = (session.categories || [])
                 .map(c => `<span class="cat-badge cat-${c}">${c}</span>`).join('');
 
+            const isTimeline = !session.commandCount; // loaded via date picker, no pre-computed values
+            const cmdCount = session.commandCount || session.commands.length;
+
             html += `
             <div class="session-card">
                 <div class="session-header" onclick="toggleSession(${idx})">
                     <div class="session-left">
-                        <div class="session-time">${dateStr} &nbsp;·&nbsp; ${startStr} → ${endStr} &nbsp;·&nbsp; ${dur}</div>
+                        <div class="session-time">${dateStr} &nbsp;·&nbsp; ${startStr} → ${endStr} ${!isTimeline ? '·&nbsp; '+dur : ''}</div>
                         <div class="session-meta">
-                            <span class="session-stat">${session.commands.length} commands</span>
+                            <span class="session-stat">${cmdCount} commands</span>
                             <div class="session-cats">${catBadges}</div>
                         </div>
                     </div>
@@ -310,11 +489,19 @@
                 const cat   = cmd.category || 'other';
                 const badge = `<span class="cat-badge cat-${cat}">${cat}</span>`;
 
+                const ec = cmd.exitCode !== null && cmd.exitCode !== undefined
+                    ? `<span class="exit-code ${cmd.exitCode === 0 ? 'ok' : 'fail'}">${cmd.exitCode === 0 ? '✓' : '✗ '+cmd.exitCode}</span>`
+                    : '';
+
+                const tagHtml = `<span class="tag-wrap">
+                    <span class="tag-badge" id="tag-${cmd.id}" onclick="startTagEdit(${cmd.id})">${cmd.tag ? escapeHtml(cmd.tag) : '+'}</span>
+                </span>`;
+
                 const dirPart  = cmd.workingDir && cmd.workingDir !== 'unknown'
                     ? `<span class="meta-item">📁 <span>${escapeHtml(cmd.workingDir)}</span></span>` : '';
                 const repoPart = cmd.repoName && cmd.repoName !== 'none'
                     ? `<span class="meta-item">🔀 <span>${escapeHtml(cmd.repoName)}</span></span>` : '';
-                const metaRow  = (dirPart || repoPart) ? `<div class="meta-row">${dirPart}${repoPart}</div>` : '';
+                const metaRow  = (dirPart || repoPart) ? `<div class="meta-row">${dirPart}${repoPart}${tagHtml}</div>` : '';
 
                 html += `
                 <div class="command-row">
@@ -322,7 +509,7 @@
                     <div class="command-body">
                         <div class="command-main">
                             <span class="cmd-text">${escapeHtml(cmd.text)}</span>
-                            ${badge}
+                            ${badge} ${ec}
                         </div>
                         ${metaRow}
                     </div>
@@ -334,7 +521,6 @@
 
         output.innerHTML = html;
 
-        // auto-expand the first (most recent) session
         toggleSession(0);
     }
 
