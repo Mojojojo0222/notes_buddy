@@ -17,6 +17,8 @@ public class Command {
     private String workingDir;
     private String repoName;       // git repo name, "none" if not inside a git repo
     private LocalDateTime savedAt;
+    private Integer exitCode;      // null for legacy records, 0 = success, non-zero = error
+    private String tag;            // manually assigned tag/label
 
     public Command() {}
 
@@ -34,5 +36,9 @@ public class Command {
     public String getWorkingDir() { return workingDir; }
     public String getRepoName() { return repoName; }
     public LocalDateTime getSavedAt() { return savedAt; }
+    public Integer getExitCode() { return exitCode; }
+    public String getTag() { return tag; }
     public void setSavedAt(LocalDateTime savedAt) { this.savedAt = savedAt; }
+    public void setExitCode(Integer exitCode) { this.exitCode = exitCode; }
+    public void setTag(String tag) { this.tag = tag; }
 }

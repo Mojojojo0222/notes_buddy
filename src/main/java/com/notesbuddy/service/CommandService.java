@@ -15,12 +15,16 @@ public class CommandService {
         this.repo = repo;
     }
 
-    public Command ingest(String text, String workingDir, String repoName, String timestamp) {
+    public Command ingest(String text, String workingDir, String repoName, String timestamp, String exitCodeStr) {
         if (isJunk(text)) return null;
 
         Command cmd = new Command(text, detectCategory(text), workingDir, repoName);
         if (timestamp != null && !timestamp.isBlank()) {
             try { cmd.setSavedAt(LocalDateTime.parse(timestamp)); }
+            catch (Exception ignored) {}
+        }
+        if (exitCodeStr != null && !exitCodeStr.isBlank()) {
+            try { cmd.setExitCode(Integer.parseInt(exitCodeStr)); }
             catch (Exception ignored) {}
         }
         repo.save(cmd);

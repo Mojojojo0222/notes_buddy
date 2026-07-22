@@ -44,17 +44,23 @@
 
 ---
 
-## 🔲 Month 2 — Remaining
+## ✅ Month 2 — All Done
 
-- [ ] Store exit codes (requires bash change: `echo $?` after command)
-- [ ] Tag commands manually from the UI
+- [x] Store exit codes (requires bash change: `echo $?` after command)
+- [x] Tag commands manually from the UI
 
 ---
 
-## 🔲 Month 3 — Richer Dashboard
+## ✅ Month 3 — All Done
 
-- [ ] Weekly summary endpoint + UI section
-- [ ] Timeline view — pick any date and see full activity
+- [x] Weekly summary endpoint + UI section
+- [x] Timeline view — pick any date and see full activity
+- [x] Filter persistence (localStorage)
+
+---
+
+## 🔲 Month 3 Remaining
+
 - [ ] Per-category drill down page
 - [ ] File watcher — detect when Dockerfile, pom.xml, *.yaml change
 

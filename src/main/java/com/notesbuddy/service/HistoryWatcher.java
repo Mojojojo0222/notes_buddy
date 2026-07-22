@@ -39,25 +39,33 @@ public class HistoryWatcher {
         stateRepo.save(state);
 
         for (String line : newLines) {
-            String[] parts = line.split("\\|", 4);
+            String[] parts = line.split("\\|", 5);
 
-            String timestamp, dir, repoName, command;
+            String timestamp, dir, repoName, command, exitCodeStr;
 
-            if (parts.length == 4) {
-                timestamp = parts[0].trim();
-                dir       = parts[1].trim();
-                repoName  = parts[2].trim();
-                command   = parts[3].trim();
+            if (parts.length == 5) {
+                timestamp   = parts[0].trim();
+                dir         = parts[1].trim();
+                repoName    = parts[2].trim();
+                command     = parts[3].trim();
+                exitCodeStr = parts[4].trim();
+            } else if (parts.length == 4) {
+                timestamp   = parts[0].trim();
+                dir         = parts[1].trim();
+                repoName    = parts[2].trim();
+                command     = parts[3].trim();
+                exitCodeStr = null;
             } else if (parts.length == 3) {
-                timestamp = null;
-                dir       = parts[0].trim();
-                repoName  = parts[1].trim();
-                command   = parts[2].trim();
+                timestamp   = null;
+                dir         = parts[0].trim();
+                repoName    = parts[1].trim();
+                command     = parts[2].trim();
+                exitCodeStr = null;
             } else {
                 continue;
             }
 
-            commandService.ingest(command, dir, repoName, timestamp);
+            commandService.ingest(command, dir, repoName, timestamp, exitCodeStr);
         }
     }
 }

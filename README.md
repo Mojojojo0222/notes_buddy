@@ -186,12 +186,17 @@ docker start notes-buddy
 
 ## API Endpoints
 
-| Method | Endpoint        | Description                                      |
-|--------|-----------------|--------------------------------------------------|
-| GET    | `/`             | Dashboard UI                                     |
-| GET    | `/commands/all` | All commands as JSON, sorted by time             |
-| GET    | `/summary`      | Today's summary (count, most used, topics)       |
-| GET    | `/h2-console`   | H2 database browser (debug, non-Docker only)     |
+| Method | Endpoint                 | Description                                      |
+|--------|--------------------------|--------------------------------------------------|
+| GET    | `/`                      | Dashboard UI                                     |
+| GET    | `/commands/all`          | All commands as JSON, sorted by time             |
+| GET    | `/commands/by-date`      | Commands for a specific date (`?date=YYYY-MM-DD`)|
+| POST   | `/commands/{id}/tag`     | Tag a command (`?tag=myLabel`)                   |
+| GET    | `/summary`               | Today's summary (count, most used, topics)       |
+| GET    | `/summary/weekly`        | Weekly summary (last 7 days, includes error count)|
+| POST   | `/ingest`                | Ingestion endpoint (called by .bashrc curl)      |
+| GET    | `/sessions`              | Sessions grouped by 30-min idle gap              |
+| GET    | `/h2-console`            | H2 database browser (debug, non-Docker only)     |
 
 ### Example — `/commands/all`
 ```json

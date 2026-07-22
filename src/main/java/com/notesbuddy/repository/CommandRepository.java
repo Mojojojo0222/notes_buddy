@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface CommandRepository extends JpaRepository<Command, Long> {
     List<Command> findAllByOrderBySavedAtAsc();
+    List<Command> findBySavedAtBetweenOrderBySavedAtAsc(java.time.LocalDateTime start, java.time.LocalDateTime end);
 }
