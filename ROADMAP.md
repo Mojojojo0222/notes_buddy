@@ -68,8 +68,8 @@
 
 ## 🔲 Month 4 — Search + Solution Cards
 
-- [ ] Full text search across all commands and notes
-- [ ] Manual tags on commands
+- [x] Full text search across all commands (ILIKE, server-side, debounced)
+- [x] Manual tags on commands
 - [ ] Solution cards — when same error reappears, link to previous fix
 - [ ] Export today's session as Markdown
 

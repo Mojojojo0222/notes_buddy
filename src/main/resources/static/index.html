@@ -277,13 +277,13 @@
     <button class="nav-btn" id="dayPrev" onclick="shiftDay(-1)">‹ Prev</button>
     <input type="date" id="datePicker" onchange="loadDate()" />
     <button class="nav-btn" id="dayNext" onclick="shiftDay(1)">Next ›</button>
-    <button class="nav-btn" onclick="selectedDate=new Date().toLocaleDateString('en-CA'); load();">Today</button>
-    <button class="nav-btn" onclick="selectedDate=''; load();">All</button>
+    <button class="nav-btn" onclick="clearSearch(); selectedDate=new Date().toLocaleDateString('en-CA'); load();">Today</button>
+    <button class="nav-btn" onclick="clearSearch(); selectedDate=''; load();">All</button>
 </div>
 
 <div class="search-wrap">
     <span class="search-icon">🔍</span>
-    <input type="text" id="search" placeholder="Search commands..." oninput="applyFilters()" />
+    <input type="text" id="search" placeholder="Search all commands (server-side)..." oninput="onSearchInput()" />
 </div>
 
 <div class="filters" id="filters"></div>
@@ -295,10 +295,13 @@
     let allCommands = [];
     let activeFilters = new Set();
     let selectedDate = '';
+    let searchQuery = '';
+    let searchTimer = null;
 
     loadFilters();
 
     async function load() {
+        const searchBox = document.getElementById('search');
         const datePicker = document.getElementById('datePicker');
 
         const [sumRes, weeklyRes] = await Promise.all([
@@ -322,6 +325,31 @@
                 ? weekly.topicsTouched.map(t => `<span class="topic-tag">${escapeHtml(t)}</span>`).join('')
                 : '<span style="color:#484f58">—</span>';
         } catch(e) { /* weekly endpoint not available */ }
+
+        // server-side search mode
+        if (searchQuery) {
+            const searchRes = await fetch(`/commands/search?q=${encodeURIComponent(searchQuery)}`);
+            const cmds = await searchRes.json();
+            // Group by date so we get day cards instead of a flat list
+            const byDate = {};
+            for (const c of cmds) {
+                const d = new Date(c.savedAt).toLocaleDateString('en-CA');
+                if (!byDate[d]) byDate[d] = { date: d, commands: [] };
+                byDate[d].commands.push(c);
+            }
+            allSessions = Object.values(byDate).map(group => ({
+                startTime: group.commands[0].savedAt,
+                endTime: group.commands[group.commands.length-1].savedAt,
+                durationMins: 0,
+                commandCount: group.commands.length,
+                categories: [...new Set(group.commands.map(c => c.category).filter(Boolean))],
+                commands: group.commands
+            }));
+            document.getElementById('totalSessions').textContent = '—';
+            buildFilterButtons();
+            applyFilters();
+            return;
+        }
 
         // if a date is selected, show that date; otherwise show sessions
         if (selectedDate) {
@@ -362,6 +390,22 @@
 
         buildFilterButtons();
         applyFilters();
+    }
+
+    // ── Server-Side Search ──
+    function onSearchInput() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            const val = document.getElementById('search').value.trim();
+            if (val.length >= 2) {
+                searchQuery = val;
+                selectedDate = '';  // clear date filter when searching
+                load();
+            } else if (val.length === 0) {
+                searchQuery = '';
+                load();
+            }
+        }, 300);
     }
 
     // ── Filters + localStorage ──
@@ -408,8 +452,15 @@
         render(filtered);
     }
 
+    // ── Search Clear ──
+    function clearSearch() {
+        searchQuery = '';
+        document.getElementById('search').value = '';
+    }
+
     // ── Timeline ──
     function loadDate() {
+        clearSearch();
         const picker = document.getElementById('datePicker');
         if (!picker.value) return;
         selectedDate = picker.value;
