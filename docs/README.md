@@ -10,6 +10,7 @@
 | Day 5 | Actuator health endpoint, env var config, clear filters | [day5/day5-notes.md](day5/day5-notes.md) |
 | Day 6 | EKS deployment, ECR, stress test, all K8s problems + fixes | [day6-eks/day6-eks-notes.md](day6-eks/day6-eks-notes.md) |
 | Day 11 | Exit codes, tags, timeline, weekly summary, filter persistence | Day 11 notes below |
+| Day 12 | Full-text search (ILIKE across 5 fields, search-as-you-type) | [day12/README.md](day12/README.md) |
 
 ---
 

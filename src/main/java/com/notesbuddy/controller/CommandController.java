@@ -80,4 +80,11 @@ public class CommandController {
         repo.save(cmd);
         return ResponseEntity.ok("tagged");
     }
+
+    // Full-text search across all command fields
+    @GetMapping("/commands/search")
+    public List<Command> search(@RequestParam String q) {
+        if (q == null || q.isBlank()) return List.of();
+        return repo.searchCommands(q.trim());
+    }
 }
