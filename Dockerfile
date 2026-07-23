@@ -1,25 +1,35 @@
-FROM maven:3.9-eclipse-temurin-17 AS build
+# Stage 1: Build React frontend
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ .
+RUN VITE_OUT_DIR=dist npm run build
+
+# Stage 2: Build Spring Boot backend
+FROM maven:3.9-eclipse-temurin-17 AS backend-build
 
 WORKDIR /app
 
-# If only source code changes (not dependencies), Maven download step is skipped.
 COPY pom.xml .
 RUN mvn dependency:go-offline -q
 
+# Copy React build output into Spring Boot's static resources directory
+COPY --from=frontend-build /frontend/dist ./src/main/resources/static
 
 COPY src ./src
 RUN mvn package -DskipTests -q
 
+# Stage 3: Runtime
 FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /app
 
-# Copy only the fat JAR from the build stage —
-COPY --from=build /app/target/notes-buddy-0.0.1.jar app.jar
+COPY --from=backend-build /app/target/notes-buddy-0.0.1.jar app.jar
 
 EXPOSE 9098
 
-#Mount volumes
 VOLUME /root
 VOLUME /app/notesbuddy-db
 
