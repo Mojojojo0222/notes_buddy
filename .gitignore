@@ -23,3 +23,4 @@ Thumbs.db
 
 # Private AI context — never pushed
 docs/AI_CONTEXT.md
+node_modules
