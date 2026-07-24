@@ -1285,6 +1285,177 @@ The frontend debounces input at 300ms, requires minimum 2 characters, and groups
 
 For our scale (thousands of commands), `LIKE` is sufficient. If we hit 100k+ rows, we'd add a `pg_trgm` GIN index or migrate to PostgreSQL `tsvector` for full-text search with relevance ranking."
 
-<｜｜DSML｜｜tool_calls>
-<｜｜DSML｜｜invoke name="write">
-<｜｜DSML｜｜parameter name="filePath" string="true">E:\Notes_Buddy\docs\day11\day11-notes.md
+---
+
+## 9. Day 13 — Solution Cards: Repeated Error Detection
+
+### 9.1 The Problem: Reactive vs Proactive
+
+Before Day 13, the dashboard told you **what** failed (exit code badges) but not **what to do about it**:
+
+```
+User types "docker build -t foo ." → exit code 1 (✗)
+User types "docker system prune"   → exit code 0 (✓)
+User types "docker build -t foo ." → exit code 0 (✓)
+
+3 weeks later:
+User types "docker build -t foo ." → exit code 1 (✗)
+Dashboard shows: ✗ 1
+User thinks: "I fixed this before... what did I do?"
+```
+
+Solution cards bridge this gap by automatically detecting repeated errors and surfacing the previous fix.
+
+### 9.2 Algorithm: Error Pattern Detection
+
+```
+Input: All commands with exitCode != null
+                               │
+                               ▼
+Step 1: Filter to failed only (exitCode != 0)
+                               │
+                               ▼
+Step 2: Group by exact command text
+                               │
+                               ▼
+Step 3: Filter groups where size >= 2 (repeated errors)
+                               │
+                               ▼
+Step 4: For each repeated error, find the fix:
+        │
+        ├── Source 1: Check if ANY occurrence has a tag
+        │             → Tag = authoritative fix description
+        │
+        └── Source 2: Scan commands after the PREVIOUS failure
+                      → If same cmd succeeded → "retried successfully"
+                      → If a meaningful cmd ran → show it as fix
+                      → Otherwise → "no fix recorded"
+                               │
+                               ▼
+Step 5: Sort by descending occurrence count
+Output: [{errorText, occurrences, lastFailed, fix, errorCategory}, ...]
+```
+
+### 9.3 Spring Data JPA: `findByExitCodeNotNullAndExitCodeNot`
+
+```java
+List<Command> findByExitCodeNotNullAndExitCodeNotOrderBySavedAtAsc(int exitCode);
+```
+
+**Method name breakdown:**
+| Fragment | SQL Equivalent |
+|----------|---------------|
+| `findBy` | `SELECT * FROM command WHERE` |
+| `ExitCodeNotNull` | `exit_code IS NOT NULL` |
+| `And` | `AND` |
+| `ExitCodeNot` | `exit_code != ?` |
+| `OrderBySavedAtAsc` | `ORDER BY saved_at ASC` |
+
+**Why use a derived method name instead of `@Query`?**
+- Simple single-condition query — method name is short and readable
+- No `@Query` needed — Spring Data JPA derives the SQL correctly
+- Single parameter (the exit code to exclude) — `@Query` would be over-engineering
+
+**Trade-off:** For multi-field searches (like Day 12's 5-field search), `@Query` is better because the method name would be absurdly long. For simple conditions, derived names are clean.
+
+### 9.4 Heuristic Fix Detection Design
+
+The `findFixFromNextCommands()` method implements a heuristic to find the fix when no tag exists:
+
+```java
+private String findFixFromNextCommands(List<Command> all, Command failedCmd) {
+    int idx = all.indexOf(failedCmd);
+    for (int i = idx + 1; i < all.size(); i++) {
+        Command next = all.get(i);
+        // Case 1: Same command retried successfully
+        if (next.getText().equals(failedCmd.getText())
+            && next.getExitCode() != null && next.getExitCode() == 0) {
+            return "retried successfully";
+        }
+        // Case 2: Skip other failures (don't chain errors)
+        if (next.getExitCode() != null && next.getExitCode() != 0) continue;
+        // Case 3: Show meaningful fix commands
+        if (isMeaningfulCommand(next.getText())) {
+            return next.getText();
+        }
+    }
+    return null; // No fix found
+}
+```
+
+**Design rationale:**
+- **Tags first** — User knowledge is authoritative. If a user took the time to tag a failed command, that tag IS the fix.
+- **Skip error chains** — If the next command also failed, it's not the fix. Skip until a successful command.
+- **Meaningful commands only** — `ls`, `cd`, `echo` are unlikely fixes. Show only commands from known categories.
+- **"retried successfully"** — When the exact same command succeeds immediately after failing, the fix might be environmental (disk space, network). The heuristic shows what happened without guessing a fake fix.
+- **No false confidence** — When no fix is found, the UI shows "no fix recorded — tag a failed command to save the fix" rather than showing nothing.
+
+### 9.5 Frontend: Push-Based Alerts
+
+Solution cards are the first push-based feature in the dashboard:
+
+```
+Before Day 13: User must search to find past errors (pull)
+After Day 13:  Dashboard shows repeated errors automatically (push)
+```
+
+**Rendering flow:**
+```
+load() calls loadSolutions() after every 15s refresh
+    │
+    ▼
+fetch('/solutions')
+    │
+    ├── Returns [] (no repeated errors) → hide section (display:none)
+    │
+    └── Returns [{errorText, fix, occurrences, ...}, ...]
+                    │
+                    ▼
+        Render cards: section.style.display = 'block'
+        Each card:
+            ✗ docker build -t foo .
+            → docker system prune
+            3×  docker  last: 2026-07-25
+```
+
+**Color coding:**
+- Section header: orange (`#f0883e`) — distinct from summary/blue sections
+- Error text: red (`#f85149`) — alert/warning
+- Fix text: green (`#3fb950`) — solution/success
+- Metadata: gray (`#484f58`) — secondary info
+
+**Empty state design:**
+- Section is `display:none` by default
+- Only shown when `/solutions` returns data
+- Single source of truth: if the API has nothing, the UI shows nothing
+- No placeholder text, no "0 solutions found" — just clean dashboard
+
+### 9.6 Edge Cases and Trade-offs
+
+| Edge Case | Handling |
+|-----------|----------|
+| Same command, different parameters | Grouped separately (`docker build -t X` ≠ `docker build -t Y`). Tag to document fix. |
+| Error fixed by a non-meaningful command | Tag the failed command with the fix description. Tags always win over heuristic. |
+| Error never happened before | Not a solution. Only show errors with ≥2 occurrences. |
+| All commands have null exitCode (legacy) | `findByExitCodeNotNull` returns empty → no solutions → section stays hidden. |
+| Error fixed by environment (disk space) | "retried successfully" is the best guess. Tag for clarity. |
+| 50+ repeated errors | Sorted by frequency. Most painful errors appear first. Dashboard doesn't get cluttered with rare errors. |
+
+### 9.7 Interview Answer: Solution Cards
+
+**Q: "How do you detect and surface repeated errors?"**
+
+"We track exit codes on every command. A background service (`SolutionService`) queries all failed commands, groups them by text, and filters to those that have failed 2+ times. For each repeated error, we look for a fix — user tags are the primary source, and a heuristic scans subsequent commands as fallback.
+
+The frontend fetches `/solutions` every refresh cycle and renders orange-highlighted cards showing the error, the suggested fix, and how many times it's occurred. The section auto-hides when there are no repeated errors.
+
+The key insight: tags make this feature genuinely useful. Without tags, the heuristic can only guess. With a tag like 'fix: docker system prune before build,' the solution card is authoritative. We intentionally made tag-as-fix the primary path and the heuristic the fallback."
+
+### 9.8 What Solution Cards Enable
+
+1. **Error frequency tracking** — Measure if fixes are effective over time
+2. **Auto-tagging** — When heuristic confidence is high, auto-tag the fix
+3. **Click-to-search** — Click error text to search all occurrences
+4. **Fuzzy grouping** — Group similar commands that fail with same error pattern
+5. **Error dashboard** — Dedicated view showing all errors with fix rates
+

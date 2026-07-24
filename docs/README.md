@@ -11,6 +11,7 @@
 | Day 6 | EKS deployment, ECR, stress test, all K8s problems + fixes | [day6-eks/day6-eks-notes.md](day6-eks/day6-eks-notes.md) |
 | Day 11 | Exit codes, tags, timeline, weekly summary, filter persistence | Day 11 notes below |
 | Day 12 | Full-text search (ILIKE across 5 fields, search-as-you-type) | [day12/README.md](day12/README.md) |
+| Day 13 | Solution cards (repeated error detection + suggested fixes) | [day13/README.md](day13/README.md) |
 
 ---
 
@@ -102,6 +103,8 @@
 | GET | /summary/weekly | CommandController.weeklySummary() | JSON with 7-day stats + error count |
 | POST | /ingest | CommandController.ingest() | "saved" or "skipped" |
 | GET | /sessions | CommandController.sessions() | Session-bucketed commands |
+| GET | /commands/search | CommandController.search() | JSON array matching commands by ILIKE across 5 fields |
+| GET | /solutions | CommandController.solutions() | JSON array of solution cards for repeated errors |
 | GET | /h2-console | H2 built-in | SQL browser for debugging |
 
 ---

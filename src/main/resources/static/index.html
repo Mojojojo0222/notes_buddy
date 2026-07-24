@@ -216,6 +216,35 @@
 
         .empty { color: #484f58; text-align: center; padding: 60px 0; font-size: 0.85rem; }
 
+        /* ── Solution Cards ── */
+        .solutions-section {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 18px 22px;
+            margin-bottom: 24px;
+        }
+        .solutions-section h2 {
+            color: #f0883e;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 16px;
+        }
+        .solutions-section h2 span { color: #484f58; font-size: 0.65rem; letter-spacing: 0; }
+        .solution-card {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 10px;
+        }
+        .solution-card:last-child { margin-bottom: 0; }
+        .solution-error { color: #f85149; font-size: 0.82rem; word-break: break-all; margin-bottom: 6px; }
+        .solution-fix   { color: #3fb950; font-size: 0.78rem; word-break: break-all; margin-bottom: 4px; }
+        .solution-fix::before { content: '→ '; color: #484f58; }
+        .solution-meta  { display: flex; gap: 12px; flex-wrap: wrap; font-size: 0.7rem; color: #484f58; }
+
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #0d1117; }
         ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
@@ -272,6 +301,11 @@
     </div>
 </div>
 
+<div class="solutions-section" id="solutionsSection" style="display:none">
+    <h2>🔄 Solution Cards <span>— repeated errors with suggested fixes</span></h2>
+    <div id="solutionsList"></div>
+</div>
+
 <div class="timeline-bar">
     <label>📅 Timeline</label>
     <button class="nav-btn" id="dayPrev" onclick="shiftDay(-1)">‹ Prev</button>
@@ -326,7 +360,8 @@
                 : '<span style="color:#484f58">—</span>';
         } catch(e) { /* weekly endpoint not available */ }
 
-        // server-side search mode
+        // load solution cards
+        loadSolutions();
         if (searchQuery) {
             const searchRes = await fetch(`/commands/search?q=${encodeURIComponent(searchQuery)}`);
             const cmds = await searchRes.json();
@@ -597,6 +632,37 @@
 
     function escapeHtml(text) {
         return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── Solution Cards ──
+    async function loadSolutions() {
+        try {
+            const res = await fetch('/solutions');
+            const solutions = await res.json();
+            const section = document.getElementById('solutionsSection');
+            const list = document.getElementById('solutionsList');
+            if (!solutions || solutions.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+            list.innerHTML = solutions.map(s => {
+                const fixHtml = s.fix
+                    ? `<div class="solution-fix">${escapeHtml(s.fix)}</div>`
+                    : '<div class="solution-fix" style="color:#484f58">no fix recorded — tag a failed command to save the fix</div>';
+                return `<div class="solution-card">
+                    <div class="solution-error">✗ ${escapeHtml(s.errorText)}</div>
+                    ${fixHtml}
+                    <div class="solution-meta">
+                        <span>${s.occurrences}×</span>
+                        <span>${escapeHtml(s.errorCategory)}</span>
+                        <span>last: ${new Date(s.lastFailed).toLocaleDateString('en-CA')}</span>
+                    </div>
+                </div>`;
+            }).join('');
+        } catch(e) {
+            document.getElementById('solutionsSection').style.display = 'none';
+        }
     }
 
     load();

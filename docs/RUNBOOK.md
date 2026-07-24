@@ -313,6 +313,7 @@ tail -f ~/.notes_buddy_log
 | `curl localhost:9098/actuator/health` | App health (UP/DOWN, DB status) |
 | `curl localhost:9098/commands/all` | All ingested commands (JSON) |
 | `curl localhost:9098/commands/search?q=docker` | Full-text search across all commands |
+| `curl localhost:9098/solutions` | Solution cards — repeated errors with fixes |
 | `curl localhost:9098/summary` | Today's stats (JSON) |
 | `curl localhost:9098/summary/weekly` | Weekly stats with error count (JSON) |
 | `curl localhost:9098/sessions` | Session grouping (JSON) |
