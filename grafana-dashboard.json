@@ -1,0 +1,109 @@
+{
+  "title": "Notes Buddy — SRE Dashboard",
+  "tags": ["notes-buddy", "sre"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Command Ingestion Rate",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{
+        "expr": "rate(notesbuddy_commands_ingested_total[5m])",
+        "legendFormat": "ingested"
+      }, {
+        "expr": "rate(notesbuddy_commands_failed_total[5m])",
+        "legendFormat": "failed"
+      }],
+      "yaxes": [{"format": "ops"}]
+    },
+    {
+      "title": "Search Requests",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [{
+        "expr": "rate(notesbuddy_search_requests_total[5m])",
+        "legendFormat": "searches"
+      }],
+      "yaxes": [{"format": "ops"}]
+    },
+    {
+      "title": "Commands by Category",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "targets": [{
+        "expr": "topk(10, notesbuddy_commands_by_category_total)",
+        "legendFormat": "{{category}}"
+      }]
+    },
+    {
+      "title": "Search Latency (p95)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 8},
+      "targets": [{
+        "expr": "notesbuddy_search_latency_seconds_p95"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Total Commands",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 8},
+      "targets": [{"expr": "notesbuddy_commands_ingested_total"}]
+    },
+    {
+      "title": "Failed Commands",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 8},
+      "targets": [{"expr": "notesbuddy_commands_failed_total"}],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "orange", "value": 10},
+              {"color": "red", "value": 50}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Tag & Solution Activity",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "targets": [{
+        "expr": "rate(notesbuddy_tag_requests_total[5m])",
+        "legendFormat": "tags"
+      }, {
+        "expr": "rate(notesbuddy_solutions_shown_total[5m])",
+        "legendFormat": "solutions"
+      }]
+    },
+    {
+      "title": "JVM Memory",
+      "type": "graph",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "targets": [{
+        "expr": "jvm_memory_used_bytes{area='heap'} / 1048576",
+        "legendFormat": "heap (MB)"
+      }, {
+        "expr": "jvm_memory_used_bytes{area='nonheap'} / 1048576",
+        "legendFormat": "non-heap (MB)"
+      }]
+    }
+  ],
+  "schemaVersion": 27
+}

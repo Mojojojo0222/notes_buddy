@@ -566,3 +566,32 @@ kubectl port-forward -n notes-buddy deployment/notes-buddy 9098:9098
 | `docs/INTERVIEW_STORY.md` | Full project story + interview prep |
 | `docs/CONCEPTS_MASTER.md` | DevOps concepts for interview prep |
 | `docs/day*/README.md` | Per-day detailed notes |
+
+---
+
+## Observability (SRE Stack)
+
+### Metrics Endpoint
+```bash
+curl http://localhost:9098/actuator/prometheus | grep notesbuddy_
+```
+
+### Grafana Dashboard
+```bash
+# URL: http://localhost:3000 (admin/admin)
+# 1. Add Prometheus data source: http://prometheus:9090
+# 2. Import grafana-dashboard.json from project root
+```
+
+### Prometheus Alerts
+```bash
+curl http://localhost:9090/api/v1/rules   # check rules loaded
+curl http://localhost:9090/api/v1/targets # check targets up
+```
+
+| Alert | When | Response |
+|-------|------|----------|
+| AppDown | Unreachable 30s | `docker compose logs notes-buddy` |
+| HighErrorRate | >20% fail 2m | Check recent exit codes |
+| IngestionStopped | 0 commands 10m | Check log file exists |
+| SearchLatencyHigh | p95 > 2s | DB query perf |

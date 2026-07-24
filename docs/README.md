@@ -12,6 +12,7 @@
 | Day 11 | Exit codes, tags, timeline, weekly summary, filter persistence | Day 11 notes below |
 | Day 12 | Full-text search (ILIKE across 5 fields, search-as-you-type) | [day12/README.md](day12/README.md) |
 | Day 13 | Solution cards (repeated error detection + suggested fixes) | [day13/README.md](day13/README.md) |
+| Day 14 | Observability stack (Micrometer metrics, Prometheus alerts, Grafana dashboard) | [day14/README.md](day14/README.md) |
 
 ---
 

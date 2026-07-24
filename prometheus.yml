@@ -1,8 +1,11 @@
 global:
   scrape_interval: 15s
 
+rule_files:
+  - 'prometheus-alerts.yml'
+
 scrape_configs:
   - job_name: 'notes-buddy'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['notes-buddy:9098']   # Docker service name resolves automatically
+      - targets: ['notes-buddy:9098']
