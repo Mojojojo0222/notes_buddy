@@ -18,4 +18,6 @@ public interface CommandRepository extends JpaRepository<Command, Long> {
            "LOWER(c.category) LIKE LOWER(CONCAT('%', :query, '%')) " +
            "ORDER BY c.savedAt ASC")
     List<Command> searchCommands(@Param("query") String query);
+
+    List<Command> findByExitCodeNotNullAndExitCodeNotOrderBySavedAtAsc(int exitCode);
 }

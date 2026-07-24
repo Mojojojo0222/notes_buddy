@@ -452,11 +452,43 @@ The pipeline takes ~3-4 minutes from push to production."
 
 ---
 
+### Phase 11: Solution Cards (Day 13)
+
+**Goal:** When the same error reappears, surface what you did to fix it last time — making the dashboard proactive, not just a log viewer.
+
+**What was built:**
+
+1. **`SolutionService.java`** — A new service that:
+   - Queries all failed commands (exit code != 0)
+   - Groups them by exact command text
+   - Filters to groups with 2+ occurrences (repeated errors)
+   - Finds the fix: user tags take priority, then a heuristic scans subsequent commands
+   - Returns solution cards sorted by frequency (most painful first)
+
+2. **`GET /solutions` API** — Returns JSON array of solution card objects with `errorText`, `occurrences`, `lastFailed`, `fix`, and `errorCategory`.
+
+3. **UI Section** — Orange-highlighted cards between weekly summary and timeline. Error text in red, fix in green, occurrence count and metadata in gray. Section auto-hides when no solutions exist.
+
+**Key design decisions:**
+- **Tags as primary fix source** — User knowledge is authoritative. Tagging a failed command with the fix description is the cleanest way to document solutions.
+- **Next-command heuristic as fallback** — Scans commands after the previous failure, skipping error chains, looking for meaningful fix commands. Works without user effort.
+- **Exact text grouping** — Simple and correct. Fuzzy matching risks merging unrelated errors.
+- **Push-based alerts** — Unlike search (pull), solution cards are the first feature that proactively tells you about problems.
+
+**Problems hit:**
+- **What counts as a fix?** The heuristic had to differentiate between a true fix command and just the next random command. Solution: only show commands matching known tool categories (git, docker, kubectl, terraform, mvn, npm, pip).
+- **Empty state** — When no repeated errors exist, the section should disappear. Solution: `display:none` by default, shown only when `/solutions` returns data.
+- **"retried successfully" case** — If the exact same command ran successfully right after failing, the heuristic shows "retried successfully" rather than guessing a fix command.
+
+**Interview story:**
+> "Solution cards are the feature that makes exit codes useful. When a command fails repeatedly, the dashboard automatically surfaces what you did to fix it last time. It groups errors by command text, checks for tagged fixes first, then falls back to a heuristic that scans the next commands after the previous failure. This is the first push-based intelligence in the system — the dashboard tells you about problems instead of waiting for you to search for them."
+
+---
+
 ## What's Next
 
 | Day | Topic | Key Learning |
 |-----|-------|-------------|
-| 13 | **Solution cards** | Surface previous fixes when same error reappears |
 | 14 | **Qdrant vector DB** | Semantic search by meaning, not keywords |
 
 ---
