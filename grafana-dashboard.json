@@ -40,7 +40,7 @@
       "type": "stat",
       "gridPos": {"h": 4, "w": 4, "x": 8, "y": 8},
       "targets": [{
-        "expr": "notesbuddy_search_latency_seconds_p95"
+        "expr": "notesbuddy_search_latency_seconds{quantile=\"0.95\"}"
       }],
       "fieldConfig": {
         "defaults": {
