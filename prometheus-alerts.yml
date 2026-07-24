@@ -1,0 +1,30 @@
+groups:
+  - name: notes-buddy
+    rules:
+      - alert: AppDown
+        expr: up{job="notes-buddy"} == 0
+        for: 30s
+        annotations:
+          summary: "Notes Buddy is down"
+          description: "App has been unreachable for 30s"
+
+      - alert: HighErrorRate
+        expr: rate(notesbuddy_commands_failed_total[5m]) / rate(notesbuddy_commands_ingested_total[5m]) > 0.2
+        for: 2m
+        annotations:
+          summary: "High command error rate"
+          description: "Error rate is {{ $value | humanizePercentage }} in the last 5m"
+
+      - alert: IngestionStopped
+        expr: rate(notesbuddy_commands_ingested_total[5m]) == 0
+        for: 10m
+        annotations:
+          summary: "Command ingestion stopped"
+          description: "No commands ingested in the last 10 minutes. Check HistoryWatcher or log file."
+
+      - alert: SearchLatencyHigh
+        expr: notesbuddy_search_latency_seconds_p95 > 2.0
+        for: 2m
+        annotations:
+          summary: "Search latency above 2s"
+          description: "P95 search latency is {{ $value }}s"

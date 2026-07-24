@@ -10,13 +10,18 @@ import java.time.LocalDateTime;
 public class CommandService {
 
     private final CommandRepository repo;
+    private final MetricsService metrics;
 
-    public CommandService(CommandRepository repo) {
+    public CommandService(CommandRepository repo, MetricsService metrics) {
         this.repo = repo;
+        this.metrics = metrics;
     }
 
     public Command ingest(String text, String workingDir, String repoName, String timestamp, String exitCodeStr) {
-        if (isJunk(text)) return null;
+        if (isJunk(text)) {
+            metrics.recordSkipped();
+            return null;
+        }
 
         Command cmd = new Command(text, detectCategory(text), workingDir, repoName);
         if (timestamp != null && !timestamp.isBlank()) {
@@ -24,10 +29,15 @@ public class CommandService {
             catch (Exception ignored) {}
         }
         if (exitCodeStr != null && !exitCodeStr.isBlank()) {
-            try { cmd.setExitCode(Integer.parseInt(exitCodeStr)); }
+            try {
+                int code = Integer.parseInt(exitCodeStr);
+                cmd.setExitCode(code);
+                if (code != 0) metrics.recordFailed();
+            }
             catch (Exception ignored) {}
         }
         repo.save(cmd);
+        metrics.recordIngested(cmd.getCategory());
         System.out.println("Ingested [" + workingDir + "] [" + repoName + "]: " + text);
         return cmd;
     }

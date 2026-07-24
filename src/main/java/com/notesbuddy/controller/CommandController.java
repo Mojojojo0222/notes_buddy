@@ -3,6 +3,7 @@ package com.notesbuddy.controller;
 import com.notesbuddy.model.Command;
 import com.notesbuddy.repository.CommandRepository;
 import com.notesbuddy.service.CommandService;
+import com.notesbuddy.service.MetricsService;
 import com.notesbuddy.service.SolutionService;
 import com.notesbuddy.service.SummaryService;
 import com.notesbuddy.service.SessionService;
@@ -21,15 +22,17 @@ public class CommandController {
     private final SessionService sessionService;
     private final CommandService commandService;
     private final SolutionService solutionService;
+    private final MetricsService metrics;
 
     public CommandController(CommandRepository repo, SummaryService summaryService,
                              SessionService sessionService, CommandService commandService,
-                             SolutionService solutionService) {
+                             SolutionService solutionService, MetricsService metrics) {
         this.repo           = repo;
         this.summaryService = summaryService;
         this.sessionService = sessionService;
         this.commandService = commandService;
         this.solutionService = solutionService;
+        this.metrics = metrics;
     }
 
     @GetMapping("/commands/all")
@@ -82,6 +85,7 @@ public class CommandController {
         if (cmd == null) return ResponseEntity.notFound().build();
         cmd.setTag(tag.isBlank() ? null : tag);
         repo.save(cmd);
+        metrics.recordTag();
         return ResponseEntity.ok("tagged");
     }
 
@@ -89,12 +93,17 @@ public class CommandController {
     @GetMapping("/commands/search")
     public List<Command> search(@RequestParam String q) {
         if (q == null || q.isBlank()) return List.of();
-        return repo.searchCommands(q.trim());
+        long start = System.currentTimeMillis();
+        List<Command> results = repo.searchCommands(q.trim());
+        metrics.recordSearch(System.currentTimeMillis() - start);
+        return results;
     }
 
     // Solution cards — repeated errors with suggested fixes
     @GetMapping("/solutions")
     public List<Map<String, Object>> solutions() {
-        return solutionService.findSolutions();
+        List<Map<String, Object>> cards = solutionService.findSolutions();
+        metrics.recordSolutions(cards.size());
+        return cards;
     }
 }

@@ -485,11 +485,40 @@ The pipeline takes ~3-4 minutes from push to production."
 
 ---
 
+### Phase 12: Observability Stack — SRE Dashboard (Day 14)
+
+**Goal:** Make every component measurable. Custom business metrics, Prometheus alerting, and an SRE-grade Grafana dashboard.
+
+**What was built:**
+
+1. **`MetricsService.java`** — 8 custom Micrometer metrics:
+   - Counters: `commands_ingested_total`, `commands_skipped_total`, `commands_failed_total`, `commands_by_category_total` (tagged by category), `search_requests_total`, `tag_requests_total`, `solutions_shown_total`
+   - Timer: `search_latency_seconds` with p50/p95/p99 percentiles
+
+2. **Prometheus alerting (4 rules):**
+   - `AppDown` — critical, 30s of zero uptime
+   - `HighErrorRate` — warning, >20% of commands failing in 5m window
+   - `IngestionStopped` — warning, no commands recorded for 10m
+   - `SearchLatencyHigh` — warning, p95 > 2 seconds
+
+3. **Grafana dashboard** — 8 panels: ingestion rate, search requests, category pie chart, latency stat with thresholds, total/failed commands, tag activity, JVM memory.
+
+**Why this matters for SRE roles:**
+- Before: "app is up" (binary health check)
+- After: "ingestion rate dropped 80%, error rate spiked, search latency degraded" (multi-dimensional observability)
+- Every alert has a runbook response documented
+- Dashboard is importable JSON — version-controlled, reproducible
+
+**Interview story:**
+> "I built a complete observability stack for a Spring Boot application. Eight custom Micrometer metrics covering ingestion, errors, search latency, and tagging activity. Prometheus scrapes the metrics endpoint, four alerting rules detect anomalies (app down, high error rate, ingestion stall, slow search), and a Grafana dashboard visualizes everything in real time. The entire stack runs locally in Docker — no external services needed. The dashboard JSON is version-controlled so every team member has the same view."
+
+---
+
 ## What's Next
 
 | Day | Topic | Key Learning |
 |-----|-------|-------------|
-| 14 | **Qdrant vector DB** | Semantic search by meaning, not keywords |
+| TBD | **Next feature** | Based on career focus — DevOps/SRE/Platform |
 
 ---
 
@@ -504,4 +533,5 @@ The pipeline takes ~3-4 minutes from push to production."
 | Docker | "Multi-stage build, ~180MB, ECR lifecycle policy (keep 10)" |
 | Security | "IRSA per-service-account, OIDC for CI/CD, no hardcoded credentials" |
 | Observability | "CloudWatch Container Insights, fluent-bit, zero restarts" |
+| Custom Metrics | "8 Micrometer metrics, Prometheus alerting, Grafana dashboard" |
 | Stress Testing | "500 concurrent requests, 500/500 success, 35% CPU headroom" |
