@@ -1,0 +1,156 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Notes Buddy — Default Values
+# Use:                           helm install notes-buddy ./helm/notes-buddy
+# Override per environment:       helm install -f values-prod.yaml
+# Override individual values:     helm install --set image.tag=v2
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Global (shared across all components) ─────────────────────────────────────
+global:
+  imageRegistry: ""          # If set, overrides image.registry for all components
+  namespaceOverride: ""      # If set, all resources use this namespace instead of release ns
+
+# ── Release metadata ─────────────────────────────────────────────────────────
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+# ── App image ────────────────────────────────────────────────────────────────
+image:
+  registry: 083777493383.dkr.ecr.ap-south-1.amazonaws.com
+  repository: notes-buddy
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# ── App component ────────────────────────────────────────────────────────────
+app:
+  name: notes-buddy
+  replicas: 1
+  containerPort: 9098
+
+  env:
+    PORT: "9098"
+    DB_HOST: notes-buddy-postgres  # matches postgres.service.name in helpers
+    DB_NAME: notesbuddy
+    DB_USER: notesbuddy
+    DB_PASS: notesbuddy
+    H2_CONSOLE: "false"
+
+  probes:
+    liveness:
+      path: /actuator/health
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      failureThreshold: 3
+    readiness:
+      path: /actuator/health
+      initialDelaySeconds: 45
+      periodSeconds: 10
+      failureThreshold: 3
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+  service:
+    type: LoadBalancer       # dev: ClusterIP, prod: LoadBalancer
+    port: 80
+    targetPort: 9098
+    annotations: {}
+
+  # ── Ingress (production) ──────────────────────────────────────────────────
+  ingress:
+    enabled: false
+    className: ""
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+    hosts:
+      - host: notes-buddy.yourdomain.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  # ── HPA ───────────────────────────────────────────────────────────────────
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 50
+
+  # ── PodDisruptionBudget (production) ──────────────────────────────────────
+  pdb:
+    enabled: false
+    minAvailable: 1
+
+  # ── ServiceAccount ────────────────────────────────────────────────────────
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+
+  # ── Volume mounts (log file from host) ────────────────────────────────────
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# ── PostgreSQL component ──────────────────────────────────────────────────────
+postgres:
+  enabled: true
+  name: postgres
+
+  image:
+    registry: docker.io
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+
+  database: notesbuddy
+  user: notesbuddy
+  password: notesbuddy
+
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: gp2
+    accessMode: ReadWriteOnce
+    subPath: pgdata
+
+  service:
+    name: notes-buddy-postgres  # DNS name the app uses to reach Postgres
+    port: 5432
+
+  securityContext:
+    fsGroup: 999
+
+# ── RBAC (GitHub Actions deployer) ────────────────────────────────────────────
+rbac:
+  enabled: false
+  deployerGroup: notes-buddy-deployer
+  githubActionsRoleArn: "arn:aws:iam::083777493383:role/notes-buddy-github-actions-role"
+
+# ── Existing ConfigMap/Secret ─────────────────────────────────────────────────
+# Set to true to use already-existing resources (created by Terraform etc.)
+existingConfigMap: ""
+existingSecret: ""

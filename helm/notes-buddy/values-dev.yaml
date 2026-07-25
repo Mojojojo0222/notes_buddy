@@ -1,0 +1,38 @@
+# ── DEV environment ───────────────────────────────────────────────────────────
+# Minimal resources. ClusterIP (no load balancer). No HPA, no PDB, no Ingress.
+# Use: helm install notes-buddy ./helm/notes-buddy -f values-dev.yaml
+
+app:
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 9098
+    annotations: {}
+  hpa:
+    enabled: false
+  pdb:
+    enabled: false
+  ingress:
+    enabled: false
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+postgres:
+  enabled: true
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 250m
+  persistence:
+    size: 1Gi
+
+rbac:
+  enabled: false

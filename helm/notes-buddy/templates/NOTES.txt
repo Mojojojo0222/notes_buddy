@@ -1,0 +1,31 @@
+🎯 Notes Buddy {{ .Chart.AppVersion }} deployed!
+
+Release name:    {{ .Release.Name }}
+Namespace:       {{ include "notes-buddy.namespace" . }}
+Chart version:   {{ .Chart.Version }}
+
+📡 Access the dashboard:
+{{- if .Values.app.ingress.enabled }}
+  https://{{ (first .Values.app.ingress.hosts).host }}
+{{- else if eq .Values.app.service.type "LoadBalancer" }}
+  export SERVICE_IP=$(kubectl get svc -n {{ include "notes-buddy.namespace" . }} {{ include "notes-buddy.fullname" . }}-app \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+  echo "http://$SERVICE_IP"
+{{- else }}
+  kubectl port-forward -n {{ include "notes-buddy.namespace" . }} \
+    svc/{{ include "notes-buddy.fullname" . }}-app {{ .Values.app.service.port }}:{{ .Values.app.service.port }}
+{{- end }}
+
+🔍 Verify health:
+  kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
+    curl http://{{ include "notes-buddy.fullname" . }}-app/actuator/health
+
+📊 Monitoring (if enabled):
+  Grafana: http://localhost:3000 (admin/admin)
+  Prometheus: http://localhost:9090
+
+📖 Docs:
+  https://github.com/Mojojojo0222/notes_buddy
+
+🛑 To uninstall:
+  helm uninstall {{ .Release.Name }} -n {{ include "notes-buddy.namespace" . }}

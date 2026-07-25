@@ -302,13 +302,17 @@ The whole thing started as a personal tool to remember what I built — it grew 
 
 ### "How do you handle secrets and credentials?"
 
-"No hardcoded credentials anywhere. Three layers:
+"No hardcoded credentials anywhere. Four layers:
 
-1. **Kubernetes Secrets:** Database passwords are stored as K8s Secrets and injected as environment variables. `base64` encoded in the YAML, not true encryption — for production we'd use AWS Secrets Manager or Sealed Secrets.
+1. **Helm b64enc at render time:** For DEV, secrets in values.yaml are plaintext (human readable), then Helm's `b64enc` function encodes them when rendering the template. Same security as raw Kubernetes Secrets — base64 is not encryption, but it's acceptable for a personal tool.
 
-2. **IRSA (IAM Roles for Service Accounts):** Pods that need AWS API access assume IAM roles directly. The EBS CSI driver assumes `notes-buddy-ebs-csi-role` scoped to `kube-system:ebs-csi-controller-sa`. No AWS keys in the pod at all.
+2. **Existing Secret pattern (production):** Helm templates support `existingSecret` — if set, Helm doesn't create the Secret at all. An External Secrets Operator syncs the real password from AWS Secrets Manager. The IAM role for ESO is provisioned by Terraform. The Helm chart just says 'a secret named X should exist.'
 
-3. **OIDC for CI/CD:** GitHub Actions assumes an IAM role via OIDC — GitHub issues a short-lived token, AWS verifies it against the OIDC provider, and the role's trust policy restricts which repo and branch can assume it. Zero static keys stored anywhere."
+3. **IRSA (IAM Roles for Service Accounts):** Pods that need AWS API access assume IAM roles directly. The EBS CSI driver assumes `notes-buddy-ebs-csi-role` scoped to `kube-system:ebs-csi-controller-sa`. No AWS keys in the pod at all.
+
+4. **OIDC for CI/CD:** GitHub Actions assumes an IAM role via OIDC — GitHub issues a short-lived token, AWS verifies it against the OIDC provider, and the role's trust policy restricts which repo and branch can assume it. Zero static keys stored anywhere.
+
+The key principle: application secrets (DB passwords) belong in Secrets Manager, not in Helm values, not in Git. Helm knows the *name* of the secret, not the *value*."
 
 ### "Tell me about a time you debugged a difficult infrastructure issue."
 
@@ -371,8 +375,27 @@ The pipeline takes ~3-4 minutes from push to production."
 - Pods, Deployments, Services (ClusterIP, LoadBalancer), Namespaces, ConfigMaps, Secrets
 - PersistentVolumeClaims + EBS storage + fsGroup + subPath
 - Liveness/Readiness probes (Spring Boot Actuator health endpoint)
-- HPA (CPU-based, 50% target, 1-4 replicas)
-- Rolling updates (maxUnavailable=1)
+- HPA (CPU-based, 50% target, 1-4 replicas, behavior tuning)
+- PodDisruptionBudget (minAvailable: 2)
+- Rolling updates (maxUnavailable: 0, maxSurge: 1 for zero-downtime)
+- IRSA (IAM Roles for Service Accounts) — per-pod IAM permissions
+- EKS addons (EBS CSI, CloudWatch)
+- OIDC provider for IRSA
+
+### Helm
+- Chart structure: Chart.yaml, values.yaml, templates/, _helpers.tpl, NOTES.txt
+- Values cascade: --set > -f values-{env}.yaml > values.yaml
+- Go template syntax: .Values, include, pipe (|), if/range, sha256sum, b64enc
+- Named templates in _helpers.tpl: fullname, name, labels, selectorLabels
+- Component labels pattern (hardcoded per resource to avoid merge mutation bug)
+- lookup for idempotent resource creation
+- checksum annotations for automatic pod restart on config change
+- b64enc at render time vs existingSecret for production
+- Conditionals for environment-aware resources (if .Values.app.hpa.enabled)
+- RollingUpdate with maxUnavailable=0 for zero-downtime
+- HPA behavior tuning (fast scale-up, slow scale-down)
+- PDB for voluntary disruption protection
+- Helm life cycle: install, upgrade, rollback, uninstall, template, lint
 - IRSA (IAM Roles for Service Accounts) — per-pod IAM permissions
 - EKS addons (EBS CSI, CloudWatch)
 - OIDC provider for IRSA
@@ -514,11 +537,63 @@ The pipeline takes ~3-4 minutes from push to production."
 
 ---
 
+### Phase 13: Helm Charts — Kubernetes Package Manager (Day 15)
+
+**Goal:** Replace all raw `k8s/` YAML files with a single production-grade Helm chart. One command deploys the whole stack.
+
+**What was built:**
+```
+helm/notes-buddy/
+├── Chart.yaml               # v0.1.0, K8s >=1.28, Apache-2.0
+├── values.yaml              # 100+ default configurable values
+├── values-dev.yaml          # 8 resources, ClusterIP, no HPA
+├── values-staging.yaml      # 11 resources, LoadBalancer, HPA (2-4)
+├── values-production.yaml   # 13 resources, Ingress+TLS, HPA (3-10), PDB (min 2)
+├── .helmignore
+└── templates/
+    ├── _helpers.tpl        # 6 named templates (fullname, name, labels, etc.)
+    ├── NOTES.txt            # Post-install instructions
+    ├── namespace.yaml       # Idempotent via lookup
+    ├── configmap.yaml       # Non-sensitive env vars
+    ├── secret.yaml          # b64enc at render time
+    ├── postgres-pvc.yaml    # PersistentVolumeClaim
+    ├── postgres-deployment.yaml  # Recreate strategy
+    ├── postgres-service.yaml
+    ├── app-deployment.yaml  # RollingUpdate (maxUnavailable=0)
+    ├── app-service.yaml
+    ├── app-hpa.yaml         # Behavior-tuned (fast up, slow down)
+    ├── app-pdb.yaml         # minAvailable: 2 (production only)
+    ├── ingress.yaml         # TLS, host-based routing
+    └── rbac.yaml            # ServiceAccount + Role + RoleBinding
+```
+
+**Key Helm concepts applied:**
+- **Values cascade** — `--set` > `-f values-prod.yaml` > `values.yaml`
+- **Component labels** — every resource gets `app.kubernetes.io/component: <name>` (hardcoded per template to avoid Go template `merge` mutation bug)
+- **Checksum annotations** — `checksum/config` and `checksum/secret` SHA256 hashes trigger pod restart on config change
+- **`lookup` idempotency** — namespace template checks `lookup "v1" "Namespace"` before creating; safe for `helm install` repeated
+- **Secret security** — plaintext in values.yaml → `b64enc` at render time; `existingSecret` pattern for production
+- **RollingUpdate** — `maxUnavailable: 0, maxSurge: 1` for zero-downtime deployments
+- **HPA behavior tuning** — 0s stabilization on scale-up (immediate), 300s on scale-down (prevent flapping)
+- **PDB** — `minAvailable: 2` protects against voluntary disruptions (node drain, cluster upgrade)
+
+**Testing:**
+- `helm lint` — 0 failures
+- `helm template` with dev/staging/prod — correct resource counts (8/11/13)
+- `helm install --dry-run --debug` — NOTES.txt renders, all templates valid
+
+**Interview story:**
+> "I built a production-grade Helm chart for the entire application — 13 templates, 3 environment profiles, 100+ configurable values. The chart encapsulates all the Kubernetes knowledge from Days 5-6 into reusable, environment-aware templates. One `helm install` replaces ten `kubectl apply` commands. Features I'm proud of: behavior-tuned HPA (scale up instantly, scale down over 5 minutes to prevent flapping), PDB with minAvailable for zero-downtime operations, and checksum annotations that automatically restart pods when ConfigMaps change."
+
+---
+
 ## What's Next
 
 | Day | Topic | Key Learning |
 |-----|-------|-------------|
-| TBD | **Next feature** | Based on career focus — DevOps/SRE/Platform |
+| TBD | **ArgoCD GitOps** | PR-driven deployments with automatic drift correction |
+| TBD | **Karpenter** | Node autoscaling — replace fixed node group |
+| TBD | **Private subnets + NAT Gateway** | Production security hardening |
 
 ---
 
@@ -535,3 +610,4 @@ The pipeline takes ~3-4 minutes from push to production."
 | Observability | "CloudWatch Container Insights, fluent-bit, zero restarts" |
 | Custom Metrics | "8 Micrometer metrics, Prometheus alerting, Grafana dashboard" |
 | Stress Testing | "500 concurrent requests, 500/500 success, 35% CPU headroom" |
+| Helm Charts | "13 templates, 3 env profiles, 100+ values, behavior-tuned HPA, PDB, zero-downtime rolling updates" |
