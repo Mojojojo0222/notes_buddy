@@ -1,0 +1,23 @@
+{{- if .Values.app.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "notes-buddy.fullname" . }}-hpa
+  namespace: {{ include "notes-buddy.namespace" . }}
+  labels:
+    {{- include "notes-buddy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "notes-buddy.fullname" . }}-app
+  minReplicas: {{ .Values.app.hpa.minReplicas }}
+  maxReplicas: {{ .Values.app.hpa.maxReplicas }}
+  metrics:
+    {{- toYaml .Values.app.hpa.metrics | nindent 4 }}
+  {{- with .Values.app.hpa.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

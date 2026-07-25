@@ -1,0 +1,19 @@
+apiVersion: v2
+name: notes-buddy
+description: A personal searchable command-line memory system – captures every terminal command and turns it into an organized engineering log
+type: application
+version: 0.1.0
+appVersion: 1.0.0
+kubeVersion: ">=1.23.0-0"
+home: https://github.com/Mojojojo0222/notes_buddy
+sources:
+  - https://github.com/Mojojojo0222/notes_buddy
+maintainers:
+  - name: Mojojojo0222
+    email: your-email@example.com
+keywords:
+  - notes
+  - terminal
+  - productivity
+  - spring-boot
+  - postgresql

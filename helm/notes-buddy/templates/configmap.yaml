@@ -1,0 +1,16 @@
+{{- if not .Values.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "notes-buddy.fullname" . }}-config
+  namespace: {{ include "notes-buddy.namespace" . }}
+  labels:
+    {{- include "notes-buddy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: config
+data:
+  PORT: {{ .Values.app.env.PORT | quote }}
+  DB_HOST: {{ .Values.app.env.DB_HOST | quote }}
+  DB_NAME: {{ .Values.app.env.DB_NAME | quote }}
+  DB_USER: {{ .Values.app.env.DB_USER | quote }}
+  H2_CONSOLE: {{ .Values.app.env.H2_CONSOLE | quote }}
+{{- end }}

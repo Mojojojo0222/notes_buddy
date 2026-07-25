@@ -1,0 +1,43 @@
+{{- if .Values.app.ingress.enabled }}
+{{- $fullname := include "notes-buddy.fullname" . }}
+{{- $servicePort := .Values.app.service.port }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-ingress
+  namespace: {{ include "notes-buddy.namespace" . }}
+  labels:
+    {{- include "notes-buddy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingress
+  annotations:
+    {{- toYaml .Values.app.ingress.annotations | nindent 4 }}
+spec:
+  {{- with .Values.app.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.app.ingress.tls }}
+  tls:
+    {{- range .Values.app.ingress.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.app.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $fullname }}-app
+                port:
+                  number: {{ $servicePort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

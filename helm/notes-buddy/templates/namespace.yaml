@@ -1,0 +1,11 @@
+{{- if not (lookup "v1" "Namespace" "" (include "notes-buddy.namespace" .)) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "notes-buddy.namespace" . }}
+  labels:
+    {{- include "notes-buddy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: namespace
+  annotations:
+    helm.sh/resource-policy: keep
+{{- end }}

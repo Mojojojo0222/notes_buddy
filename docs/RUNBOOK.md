@@ -9,9 +9,10 @@ How to run this application in every environment, with every problem you'll hit 
 2. [Local — Without Docker (Spring Boot + Maven)](#local--without-docker-spring-boot--maven)
 3. [Local — With Docker (docker-compose)](#local--with-docker-docker-compose)
 4. [AWS EKS (Kubernetes)](#aws-eks-kubernetes)
-5. [One-Time Setup: .bashrc + Log File](#one-time-setup-bashrc--log-file)
-6. [Commands Quick Reference](#commands-quick-reference)
-7. [Troubleshooting Index](#troubleshooting-index)
+5. [Helm Charts (Recommended)](#helm-charts-recommended)
+6. [One-Time Setup: .bashrc + Log File](#one-time-setup-bashrc--log-file)
+7. [Commands Quick Reference](#commands-quick-reference)
+8. [Troubleshooting Index](#troubleshooting-index)
 
 ---
 
@@ -163,11 +164,26 @@ aws eks update-kubeconfig --region ap-south-1 --name notes-buddy
 > **Terraform creates:** VPC, 2 subnets, IGW, IAM roles (cluster, node, EBS CSI, GitHub Actions), EKS cluster, node group, OIDC provider, ECR repo, CloudWatch + EBS CSI addons, GitHub OIDC provider.
 > **28 resources total.** State stored in S3 bucket `notes-buddy-terraform-state-ACCOUNT_ID`.
 
-### Deploy the App
+### Deploy the App (Helm — Preferred)
+```bash
+cd E:\Notes_Buddy\helm\notes-buddy
+
+# DEV: 8 resources, ClusterIP, no HPA
+helm install notes-buddy . -f values-dev.yaml --namespace notes-buddy --create-namespace
+
+# STAGING: 11 resources, LoadBalancer, HPA (2-4), RBAC
+helm install notes-buddy . -f values-staging.yaml --namespace notes-buddy --create-namespace
+
+# PRODUCTION: 13 resources, Ingress+TLS, HPA (3-10), PDB, RBAC
+helm install notes-buddy . -f values-production.yaml --namespace notes-buddy --create-namespace
+```
+
+> **Helm replaces 10 `kubectl apply` commands with 1 `helm install`.** See [Helm Charts section](#helm-charts-recommended) for full lifecycle commands.
+
+### Deploy the App (Raw YAML — Legacy)
 ```bash
 cd E:\Notes_Buddy
 
-# Create namespace and all resources
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/configmap.yaml
 kubectl apply -f k8s/secret.yaml
@@ -246,6 +262,152 @@ aws ecr describe-repositories --region ap-south-1
 
 ---
 
+## Helm Charts (Recommended)
+
+Helm is the preferred way to deploy Notes Buddy. The chart is at `helm/notes-buddy/` with 13 templates and 3 environment profiles.
+
+### Prerequisites
+```bash
+# Install Helm (if not present)
+# Windows: choco install kubernetes-helm
+# Mac: brew install helm
+# Linux: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# Verify
+helm version --short   # should be v3.x
+```
+
+### Chart Structure
+```
+helm/notes-buddy/
+├── Chart.yaml              # Name: notes-buddy, version: 0.1.0
+├── values.yaml             # Default config (100+ values)
+├── values-dev.yaml         # DEV overrides (8 resources)
+├── values-staging.yaml     # STAGING overrides (11 resources)
+├── values-production.yaml  # PRODUCTION overrides (13 resources)
+├── .helmignore
+└── templates/
+    ├── _helpers.tpl        # 6 reusable templates
+    ├── NOTES.txt           # Post-install instructions
+    ├── namespace.yaml      # Idempotent (lookup)
+    ├── configmap.yaml      # Non-sensitive env vars
+    ├── secret.yaml         # DB password (b64enc at render)
+    ├── postgres-pvc.yaml
+    ├── postgres-deployment.yaml
+    ├── postgres-service.yaml
+    ├── app-deployment.yaml
+    ├── app-service.yaml
+    ├── app-hpa.yaml
+    ├── app-pdb.yaml
+    ├── ingress.yaml
+    └── rbac.yaml
+```
+
+### Environment Profiles
+
+| Setting | DEV | STAGING | PRODUCTION |
+|---------|-----|---------|------------|
+| App replicas | 1 | 2 | 3 |
+| Service type | ClusterIP | LoadBalancer | LoadBalancer |
+| HPA | disabled | enabled (2-4) | enabled (3-10) |
+| PDB | disabled | disabled | minAvailable: 2 |
+| Ingress | disabled | disabled | enabled + TLS |
+| RBAC | disabled | enabled | enabled |
+| App resources | 256Mi/512Mi | 384Mi/768Mi | 512Mi/1Gi |
+| Postgres storage | 1Gi | 5Gi | 10Gi (gp3) |
+| Total K8s resources | 8 | 11 | 13 |
+
+### Lifecycle Commands
+
+```bash
+# === INSTALL (first time) ===
+
+# DEV — minimal, no external dependencies
+helm install notes-buddy ./helm/notes-buddy \
+  -f values-dev.yaml \
+  --namespace notes-buddy --create-namespace
+
+# STAGING — LoadBalancer + HPA
+helm install notes-buddy ./helm/notes-buddy \
+  -f values-staging.yaml \
+  --namespace notes-buddy --create-namespace
+
+# PRODUCTION — full HA with Ingress, HPA, PDB
+helm install notes-buddy ./helm/notes-buddy \
+  -f values-production.yaml \
+  --namespace notes-buddy --create-namespace
+
+# === UPGRADE (config change or new image) ===
+helm upgrade notes-buddy ./helm/notes-buddy \
+  -f values-dev.yaml
+
+# Override just the image tag on the fly:
+helm upgrade notes-buddy ./helm/notes-buddy \
+  -f values-production.yaml \
+  --set image.tag=v2.1.0
+
+# === ROLLBACK ===
+helm rollback notes-buddy 2 -n notes-buddy
+
+# === STATUS / HISTORY ===
+helm list -n notes-buddy                         # all releases
+helm history notes-buddy -n notes-buddy          # revision timeline
+helm status notes-buddy -n notes-buddy           # release details
+
+# === UNINSTALL ===
+helm uninstall notes-buddy -n notes-buddy
+
+# === DEBUG (no cluster needed) ===
+
+# Render YAML and inspect
+helm template notes-buddy ./helm/notes-buddy -f values-dev.yaml
+
+# Validate chart
+helm lint ./helm/notes-buddy
+
+# Dry-run install (see what would be created)
+helm install notes-buddy ./helm/notes-buddy \
+  -f values-production.yaml \
+  --namespace notes-buddy --create-namespace \
+  --dry-run --debug
+```
+
+### Packaging
+```bash
+# Package into a .tgz for distribution
+helm package ./helm/notes-buddy -d ./helm/
+
+# Result: helm/notes-buddy-0.1.0.tgz
+# Can be hosted on any HTTP server or Helm repo
+```
+
+### Common Modifications
+
+**Change environment:**
+```bash
+# Just switch the values file
+helm upgrade notes-buddy ./helm/notes-buddy -f values-production.yaml
+```
+
+**Override a single value:**
+```bash
+helm upgrade notes-buddy ./helm/notes-buddy \
+  -f values-dev.yaml \
+  --set app.replicas=3 \
+  --set image.tag=latest
+```
+
+**Change Postgres password (DEV only):**
+```bash
+# Edit values.yaml directly:
+# app.env.DB_PASS: newpassword
+
+# Then upgrade (checksum/secret changes → pods restart automatically)
+helm upgrade notes-buddy ./helm/notes-buddy -f values-dev.yaml
+```
+
+---
+
 ## One-Time Setup: .bashrc + Log File
 
 The app gets its data from `~/.notes_buddy_log`. This file is written by a `PROMPT_COMMAND` hook in your shell.
@@ -305,7 +467,8 @@ tail -f ~/.notes_buddy_log
 |---------|------|
 | `java -jar target/notes-buddy-0.0.1.jar` | Local without Docker |
 | `docker compose up -d` | Local with Docker |
-| `kubectl apply -f k8s/` | Deploy to EKS |
+| `helm install notes-buddy ./helm/notes-buddy -f values-dev.yaml --namespace notes-buddy --create-namespace` | Deploy to K8s (Helm, preferred) |
+| `kubectl apply -f k8s/` | Deploy to K8s (raw YAML, legacy) |
 
 ### Monitor
 | Command | What It Shows |
@@ -320,6 +483,12 @@ tail -f ~/.notes_buddy_log
 | `kubectl get pods -n notes-buddy -w` | Pod status in real time |
 | `kubectl logs -n notes-buddy deployment/notes-buddy -f` | Live app logs |
 | `docker compose logs -f notes-buddy` | Live logs (Docker) |
+| `helm list -n notes-buddy` | List all Helm releases |
+| `helm status notes-buddy -n notes-buddy` | Show release status + NOTES.txt |
+| `helm history notes-buddy -n notes-buddy` | Show all revision history |
+| `helm template notes-buddy ./helm/notes-buddy -f values-dev.yaml` | Render YAML without installing |
+| `helm lint ./helm/notes-buddy` | Validate chart syntax |
+| `helm rollback notes-buddy 2 -n notes-buddy` | Rollback to revision 2 |
 
 ### Debug
 | Command | When |
@@ -540,6 +709,7 @@ kubectl port-forward -n notes-buddy deployment/notes-buddy 9098:9098
 | **Log file** | `~/.notes_buddy_log` | Volume mounted | `/ingest` API only |
 | **Port** | 9098 | 9098 | 80 (ALB) → 9098 |
 | **Data persistence** | Local PG | Docker volume | EBS volume (survives pod restarts) |
+| **Deploy command** | `java -jar target/...` | `docker compose up -d` | `helm install ... -f values-*.yaml` |
 | **Cost** | Free | Free | ~$50-70/mo (2 t3.small + ALB + EBS) |
 | **Auto-restart** | No | Yes (unless `docker compose down`) | Yes (K8s keeps pods running) |
 
@@ -553,13 +723,20 @@ kubectl port-forward -n notes-buddy deployment/notes-buddy 9098:9098
 | `src/main/resources/application.properties` | Config (env vars) |
 | `Dockerfile` | Multi-stage Docker build |
 | `docker-compose.yml` | Local Docker environment |
-| `k8s/namespace.yaml` | K8s namespace |
-| `k8s/configmap.yaml` | Environment variables for K8s |
-| `k8s/secret.yaml` | DB password (base64) |
-| `k8s/postgres.yaml` | PostgreSQL PVC + Deployment + Service |
-| `k8s/notes-buddy.yaml` | App Deployment + LoadBalancer Service |
-| `k8s/hpa.yaml` | CPU-based autoscaling |
-| `k8s/rbac-github-actions.yaml` | GitHub Actions RBAC Role + RoleBinding |
+| `k8s/namespace.yaml` | K8s namespace (LEGACY — use Helm) |
+| `k8s/configmap.yaml` | Environment variables for K8s (LEGACY — use Helm) |
+| `k8s/secret.yaml` | DB password (base64) (LEGACY — use Helm) |
+| `k8s/postgres.yaml` | PostgreSQL PVC + Deployment + Service (LEGACY — use Helm) |
+| `k8s/notes-buddy.yaml` | App Deployment + LoadBalancer Service (LEGACY — use Helm) |
+| `k8s/hpa.yaml` | CPU-based autoscaling (LEGACY — use Helm) |
+| `k8s/rbac-github-actions.yaml` | GitHub Actions RBAC Role + RoleBinding (LEGACY — use Helm) |
+| `helm/notes-buddy/Chart.yaml` | Helm chart metadata (name, version, kubeVersion) |
+| `helm/notes-buddy/values.yaml` | Default configuration (100+ values) |
+| `helm/notes-buddy/values-dev.yaml` | DEV environment overrides |
+| `helm/notes-buddy/values-staging.yaml` | STAGING environment overrides |
+| `helm/notes-buddy/values-production.yaml` | PRODUCTION environment overrides |
+| `helm/notes-buddy/templates/_helpers.tpl` | Reusable named templates |
+| `helm/notes-buddy/templates/NOTES.txt` | Post-install instructions |
 | `terraform/` | Full IaC: VPC, EKS, ECR, IAM, OIDC |
 | `.github/workflows/deploy.yml` | CI/CD pipeline |
 | `docs/AI_CONTEXT.md` | Private AI session memory (DO NOT PUSH) |

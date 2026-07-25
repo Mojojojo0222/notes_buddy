@@ -1,0 +1,21 @@
+{{- if .Values.app.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "notes-buddy.fullname" . }}-pdb
+  namespace: {{ include "notes-buddy.namespace" . }}
+  labels:
+    {{- include "notes-buddy.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pdb
+spec:
+  {{- if .Values.app.pdb.minAvailable }}
+  minAvailable: {{ .Values.app.pdb.minAvailable }}
+  {{- end }}
+  {{- if .Values.app.pdb.maxUnavailable }}
+  maxUnavailable: {{ .Values.app.pdb.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "notes-buddy.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: app
+{{- end }}

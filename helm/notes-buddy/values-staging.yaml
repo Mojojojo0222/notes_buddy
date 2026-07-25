@@ -1,0 +1,46 @@
+# ── STAGING environment ───────────────────────────────────────────────────────
+# Production-like but smaller. LoadBalancer, HPA, but no PDB or Ingress.
+# Use: helm install notes-buddy ./helm/notes-buddy -f values-staging.yaml
+
+app:
+  replicas: 2
+  service:
+    type: LoadBalancer
+    port: 80
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 50
+  pdb:
+    enabled: false
+  ingress:
+    enabled: false
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+postgres:
+  enabled: true
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  persistence:
+    size: 5Gi
+
+rbac:
+  enabled: true

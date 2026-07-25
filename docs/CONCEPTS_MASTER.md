@@ -1459,3 +1459,410 @@ The key insight: tags make this feature genuinely useful. Without tags, the heur
 4. **Fuzzy grouping** — Group similar commands that fail with same error pattern
 5. **Error dashboard** — Dedicated view showing all errors with fix rates
 
+---
+
+## 10. Helm — Kubernetes Package Manager (Day 15)
+
+### 10.1 What Is Helm?
+
+Helm is a **package manager for Kubernetes**, like `apt` for Debian or `brew` for macOS. A **chart** is a bundle of K8s YAML templates. A **release** is a running instance of a chart.
+
+```
+Helm Chart (bundle of templates)
+    │
+    ├── values.yaml + values-prod.yaml (configuration)
+    │
+    ▼
+Helm renders templates with values
+    │
+    ▼
+kubectl apply -f rendered.yaml
+```
+
+**Why Helm over raw YAML:**
+- **Templating:** One template, many environments (dev/staging/prod)
+- **Packaging:** `helm package` creates a `.tgz` — shareable, versionable
+- **Lifecycle:** `helm install/upgrade/rollback/uninstall` — built-in release management
+- **Dependencies:** Subcharts for Postgres, Redis, etc. — compose complex apps from reusable components
+
+### 10.2 Chart Structure
+
+```
+helm/notes-buddy/
+├── Chart.yaml           # Metadata: name, version, appVersion, kubeVersion
+├── values.yaml          # Default configuration (DEFAULT environment)
+├── values-dev.yaml      # DEV overrides (ClusterIP, no HPA)
+├── values-staging.yaml  # STAGING overrides (LoadBalancer, HPA)
+├── values-production.yaml # PRODUCTION overrides (full HA, Ingress)
+├── .helmignore          # Patterns to exclude when packaging
+└── templates/
+    ├── _helpers.tpl     # Reusable named template functions
+    ├── NOTES.txt        # Post-install instructions shown to user
+    ├── namespace.yaml   # Idempotent namespace creation
+    ├── configmap.yaml   # Non-sensitive env vars
+    ├── secret.yaml      # DB password (b64enc at render time)
+    ├── postgres-pvc.yaml
+    ├── postgres-deployment.yaml
+    ├── postgres-service.yaml
+    ├── app-deployment.yaml
+    ├── app-service.yaml
+    ├── app-hpa.yaml
+    ├── app-pdb.yaml
+    ├── ingress.yaml
+    └── rbac.yaml
+```
+
+### 10.3 Values Cascade
+
+Helm resolves values in priority order (highest wins):
+
+```
+1. --set (command-line flags)
+2. -f values-production.yaml (explicit files)
+3. values.yaml (defaults)
+```
+
+```bash
+# DEV
+helm install nb ./helm/notes-buddy -f values-dev.yaml \
+  --namespace notes-buddy --create-namespace
+
+# Override just the image tag on the fly
+helm upgrade nb ./helm/notes-buddy \
+  -f values-production.yaml \
+  --set image.tag=v2.1.0
+```
+
+### 10.4 Go Template Syntax
+
+Helm uses Go templates with Sprig function library:
+
+| Syntax | What It Does | Example Output |
+|--------|-------------|---------------|
+| `{{ .Values.app.replicas }}` | Inject value | `3` |
+| `{{ include "notes-buddy.fullname" . }}` | Call named template | `notes-buddy-app` |
+| `{{ .Values.app.env.DB_PASS \| b64enc \| quote }}` | Pipe through functions | `"bm90ZXNidWRkeQ=="` |
+| `{{- toYaml .Values.app.resources \| nindent 12 }}` | YAML marshal + indent | Resource block |
+| `{{ if .Values.app.hpa.enabled }}...{{ end }}` | Conditional | HPA YAML or nothing |
+| `{{ range .Values.app.ingress.hosts }}...{{ end }}` | Loop over list | Ingress rules |
+| `{{ sha256sum (include "path/configmap.yaml" .) }}` | Content hash | `c37db753...` |
+| `{{ default "defaultVal" .Values.someVal }}` | Fallback (like `\|\|` ) | `defaultVal` if unset |
+| `{{ required "env is required" .Values.env }}` | Required validation | Error if unset |
+
+**Pipe (`|`) semantics:** Functions pipe from left to right, same as Unix pipes.
+```
+inputValue | function1 | function2
+```
+Example: `$DB_PASS | b64enc | quote` → base64-encode, then wrap in quotes.
+
+### 10.5 Named Templates (`_helpers.tpl`)
+
+`_helpers.tpl` is a special file — Helm processes it first and makes all `{{ define }}` blocks available to every template.
+
+```yaml
+{{- define "notes-buddy.labels" -}}
+helm.sh/chart: {{ include "notes-buddy.name" . }}-{{ .Chart.Version | replace "+" "_" }}
+{{ include "notes-buddy.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "notes-buddy.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name (default .Chart.Name .Values.nameOverride) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+```
+
+**Why helpers?**
+- **DRY:** Every resource needs the same labels. Without helpers, you'd copy-paste labels into 13 files.
+- **Consistency:** Every resource gets identical `app.kubernetes.io/name`, `app.kubernetes.io/instance`, `helm.sh/chart`.
+- **The `selectorLabels` helper** is especially important — selector labels must be immutable after initial deploy. A helper guarantees they never change.
+
+**The `.` context:** When you call `{{ include "helper" . }}`, the dot (`.`) passes the entire root context (Values, Release, Chart, etc.) to the helper. All helpers receive the full context.
+
+### 10.6 Component Labels Pattern
+
+Every resource gets `app.kubernetes.io/component: <name>`. This enables fine-grained queries:
+
+```yaml
+# In each template, hardcoded per component:
+labels:
+  {{- include "notes-buddy.labels" . | nindent 4 }}
+  app.kubernetes.io/component: app   # or: postgres, hpa, pdb, ingress, etc.
+```
+
+```bash
+# Query all resources of a specific component
+kubectl get all -l app.kubernetes.io/component=postgres -n notes-buddy
+kubectl get all -l app.kubernetes.io/component=app -n notes-buddy
+```
+
+**Why hardcode instead of using a helper with `merge`?**
+The `merge` function in Sprig mutates the first argument. If you do `merge . (dict "component" "postgres")`, the root context `.` gets a `component` field that leaks to all subsequent templates. Hardcoding avoids this bug entirely.
+
+### 10.7 `lookup` — Idempotent Namespace
+
+```yaml
+{{- if not (lookup "v1" "Namespace" "" (include "notes-buddy.namespace" .)) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "notes-buddy.namespace" . }}
+  annotations:
+    helm.sh/resource-policy: keep
+{{- end }}
+```
+
+- `lookup` queries the K8s API at template render time
+- If namespace exists → skip (no `---` separator, no YAML output)
+- If namespace doesn't exist → create it
+- `helm.sh/resource-policy: keep` — Helm won't delete the namespace on `helm uninstall`
+
+**Without `lookup`:** Second `helm install` fails with `Error: namespace already exists`.
+
+### 10.8 Checksum Annotations — Auto Pod Restart on Config Change
+
+```yaml
+annotations:
+  checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+  checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+```
+
+**The problem:** You change `DB_HOST` in values.yaml. `helm upgrade` updates the ConfigMap. But the running pods still use the old env vars. They don't restart automatically.
+
+**The fix:** The `checksum/config` annotation includes a SHA256 hash of the ConfigMap. When the ConfigMap content changes, the hash changes → the pod template changes → `helm upgrade` triggers a rolling update.
+
+**Why sha256 the template file, not the value directly?**
+- If we hashed just `DB_HOST`, we'd miss changes to `PORT`, `DB_NAME`, etc.
+- Hashing the entire template file captures ALL changes at once.
+- The `$.Template.BasePath` variable points to the chart's `templates/` directory.
+
+### 10.9 Secret Handling in Helm
+
+```yaml
+# values.yaml (plaintext — human readable)
+app:
+  env:
+    DB_PASS: notesbuddy
+
+# secret.yaml (encoded at render time)
+data:
+  DB_PASS: {{ .Values.app.env.DB_PASS | b64enc | quote }}
+```
+
+**Three security layers:**
+
+| Layer | Mechanism | When to Use |
+|-------|-----------|-------------|
+| **1. `b64enc` at render** | Values.yaml has plaintext → Helm base64-encodes at render time | DEV, personal tools |
+| **2. External Secrets Operator** | Store in AWS Secrets Manager / Vault. ESO syncs to K8s Secret. Helm sets `existingSecret`. | Production |
+| **3. Sealed Secrets** | Encrypt with `kubeseal`. Store encrypted SealedSecret in Git. Controller decrypts at runtime. | GitOps |
+| | | |
+
+**Your Terraform is safe:**
+- Terraform doesn't store the DB password — that's in Helm values.yaml
+- Terraform creates IAM roles with trust policies (OIDC, IRSA) — these grant AWS permissions but never contain secrets
+- Terraform's state file (`terraform.tfstate`) is encrypted at rest in S3 (SSE-AES256) and locked with DynamoDB
+- For production: add a `aws_secretsmanager_secret` resource in Terraform, ESO reads from it, Helm uses `existingSecret`
+
+### 10.10 PodDisruptionBudget (PDB)
+
+A PDB guarantees that a minimum number of pods remain available during voluntary disruptions (node drains, rolling updates, cluster upgrades).
+
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: app
+```
+
+**Without PDB:** During a node drain, all app pods could be evicted simultaneously → downtime.
+
+**With PDB (`minAvailable: 2`):** K8s ensures at least 2 app pods are always running. Node drain evicts pods one at a time.
+
+**PDB only protects against VOLUNTARY disruptions:**
+- ✅ Node drain (kubectl drain)
+- ✅ Cluster upgrade (eksctl upgrade)
+- ✅ Rolling update (new pods starting)
+- ❌ Node crash (involuntary — PDB can't help)
+- ❌ OOMKill (involuntary)
+
+**PDB requires multiple replicas.** With `minAvailable: 2`, you need at least 3 replicas (so at most 1 can be disrupted = you still have 2). This is why production has 3 replicas.
+
+### 10.11 HPA Behavior Tuning
+
+```yaml
+behavior:
+  scaleUp:
+    stabilizationWindowSeconds: 0      # Scale up immediately
+    policies:
+      - type: Percent
+        value: 100                      # Double pods every 15s
+        periodSeconds: 15
+  scaleDown:
+    stabilizationWindowSeconds: 300     # Wait 5 min before scaling down
+    policies:
+      - type: Percent
+        value: 25                       # Reduce by 25% at a time
+        periodSeconds: 60
+```
+
+**Why asymmetric (fast scale-up, slow scale-down)?**
+- **Cost of under-provisioning:** Slow responses, timeout errors, user dissatisfaction
+- **Cost of over-provisioning:** Extra pod cost (money), which is low
+- **Flapping prevention:** Without stabilization window, a brief CPU dip triggers scale-down, then the next request triggers scale-up again → pods oscillate
+
+The 5-minute stabilization window means: "only scale down if CPU has been below threshold for 5 consecutive minutes."
+
+### 10.12 RollingUpdate Strategy
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0     # Never have fewer pods than desired
+    maxSurge: 1            # Can have 1 extra pod during update
+```
+
+**Why `maxUnavailable: 0`?**
+- Guarantees zero downtime during deployments
+- New pod starts first, old pod is terminated only after new pod is Ready
+- Trade-off: uses extra resources during deploy (old + new pods coexist)
+- For production with PDB + HPA: all three work together — PDB protects minimum, RollingUpdate ensures zero-downtime, HPA handles load changes
+
+### 10.13 Postgres Deployment: Recreate Strategy
+
+```yaml
+strategy:
+  type: Recreate    # Not RollingUpdate
+```
+
+**Why Recreate for Postgres?**
+Postgres uses a PersistentVolumeClaim (ReadWriteOnce — can only be mounted by one node). During a RollingUpdate:
+1. New pod starts → tries to mount PVC → PVC already mounted by old pod → fails
+2. Old pod terminates → new pod mounts PVC → works, but confusing
+
+With `Recreate`:
+1. Old pod is killed
+2. PVC is unmounted
+3. New pod starts → mounts PVC cleanly
+
+### 10.14 Helm Lifecycle Commands
+
+```bash
+# Create namespace + install everything
+helm install notes-buddy ./helm/notes-buddy -f values-dev.yaml \
+  --namespace notes-buddy --create-namespace
+
+# See rendered YAML (debug, no cluster needed)
+helm template notes-buddy ./helm/notes-buddy -f values-dev.yaml
+
+# Update release
+helm upgrade notes-buddy ./helm/notes-buddy -f values-dev.yaml
+
+# Rollback to revision 2
+helm rollback notes-buddy 2 -n notes-buddy
+
+# List releases
+helm list -n notes-buddy
+
+# See release history
+helm history notes-buddy -n notes-buddy
+
+# Uninstall
+helm uninstall notes-buddy -n notes-buddy
+```
+
+**Key difference from `kubectl apply`:**
+- `helm upgrade` is **declarative apply + diff + history** — it knows what changed between releases and can roll back
+- `kubectl apply` is **declarative apply** — it applies whatever you give it, no history, no rollback
+
+### 10.15 `values-dev.yaml` vs `values-production.yaml` — Side by Side
+
+| Setting | DEV | PRODUCTION |
+|---------|-----|-----------|
+| replicas | 1 | 3 |
+| service.type | ClusterIP | LoadBalancer |
+| service.port | 9098 (direct) | 80 (ALB → 9098) |
+| HPA | disabled | enabled (3-10 pods) |
+| PDB | disabled | minAvailable: 2 |
+| Ingress | disabled | enabled + TLS |
+| RBAC | disabled | enabled |
+| app resources | 256Mi/512Mi | 512Mi/1Gi |
+| postgres resources | 128Mi/256Mi | 512Mi/1Gi |
+| postgres storage | 1Gi | 10Gi (gp3) |
+| Total resources | 8 | 13 |
+
+### 10.16 Interview Questions (Helm)
+
+**Q: "Why use Helm instead of raw kubectl apply?"**
+
+> "Raw kubectl apply works for one environment. When you need dev, staging, and production — each with different replica counts, resource sizes, service types, and feature flags — you either duplicate YAML or use templating.
+>
+> Helm gives me one template per resource type and multiple values files for each environment. The same `app-deployment.yaml` renders 1 replica for dev and 3 for production. The same `app-service.yaml` renders ClusterIP for dev and LoadBalancer for production.
+>
+> Plus Helm tracks releases. `helm rollback notes-buddy 2` reverts to the previous deployment. With kubectl, you'd need to track the previous YAML yourself."
+
+**Q: "How do you handle secrets in Helm?"**
+
+> "Three layers depending on the environment. For dev, secrets in values.yaml are base64-encoded at template render time — same security level as raw Kubernetes Secrets. For staging and production, we use the `existingSecret` pattern: Helm doesn't create the Secret at all; an External Secrets Operator syncs it from AWS Secrets Manager. The IAM permissions for ESO are managed by Terraform.
+>
+> The key principle: Helm templates should NEVER contain production secrets. Instead, Helm knows 'a secret with name X should exist' and the actual secret comes from an external source."
+
+**Q: "How do you ensure zero-downtime deployments?"**
+
+> "Three things work together:
+>
+> 1. **RollingUpdate strategy** with `maxUnavailable: 0` — new pods start before old pods are terminated
+> 2. **Readiness probes** — traffic isn't routed to a pod until `/actuator/health` returns 200
+> 3. **PodDisruptionBudget** with `minAvailable: 2` — during node drains or cluster upgrades, at least 2 pods remain running
+>
+> With 3 replicas, a rolling update keeps 3 pods serving traffic throughout, and a node drain only affects 1 pod at a time. PDB only applies to voluntary disruptions (node drains, upgrades), not involuntary ones (crashes, OOMKills)."
+
+**Q: "What's the difference between Helm and Kustomize?"**
+
+> "Helm is a package manager with templating — Go templates, conditionals, loops, functions. Kustomize is a YAML overlay system — patches, not templates.
+>
+> Helm is better when you need to distribute an application (a chart is a self-contained package) or need complex logic in templates (conditionals, loops, function pipelines).
+>
+> Kustomize is better when you want to customize existing YAML without changing the base — overlays add or modify fields without templates.
+>
+> For Notes Buddy, Helm is the right choice because we have clear environment boundaries (dev/staging/prod) and need conditional resources (HPA enabled in prod only)."
+
+### 10.17 Security: Helm + Terraform Together
+
+**The question:** "Helm stores secrets in values.yaml. Terraform state stores everything. Is this safe?"
+
+**Answer — they're separate concerns:**
+
+```
+Terraform manages INFRASTRUCTURE:
+  - VPC, subnets, IAM roles, EKS cluster, ECR repo
+  - OIDC providers, IRSA roles
+  - S3 bucket for Terraform state (AES-256 encrypted)
+  - NEVER contains application secrets (DB passwords)
+
+Helm manages APPLICATION CONFIGURATION:
+  - Image tags, replica counts, env vars
+  - DEV secrets in values.yaml (acceptable for personal tools)
+  - PROD secrets from External Secrets Operator (not in Helm)
+
+The only overlap: Helm's `existingSecret` pattern says
+"don't create Secret X, it will exist from outside."
+Terraform can create the IAM role that ESO uses to
+fetch from AWS Secrets Manager.
+```
+
+**Terraform state safety:**
+- S3 backend with SSE-AES256 encryption at rest
+- DynamoDB locking prevents concurrent modifications
+- Versioning enabled — recover previous state versions
+- Public access blocked — only authenticated AWS principals can read
+- Terraform state does NOT contain your application DB password — that's in Helm values.yaml (or Secrets Manager for prod)
+

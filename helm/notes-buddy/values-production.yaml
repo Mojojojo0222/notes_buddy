@@ -1,0 +1,85 @@
+# ── PRODUCTION environment ────────────────────────────────────────────────────
+# Full production spec: LoadBalancer, HPA, PDB, Ingress with TLS.
+# Use: helm install notes-buddy ./helm/notes-buddy -f values-production.yaml
+
+app:
+  replicas: 3
+  service:
+    type: LoadBalancer
+    port: 80
+    annotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: external
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+  hpa:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 50
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
+    behavior:
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 25
+            periodSeconds: 60
+  pdb:
+    enabled: true
+    minAvailable: 2
+  ingress:
+    enabled: true
+    className: alb
+    annotations:
+      kubernetes.io/ingress.class: alb
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:ap-south-1:083777493383:certificate/YOUR-CERT-ARN"
+    hosts:
+      - host: notes-buddy.yourdomain.com
+        paths:
+          - path: /
+            pathType: Prefix
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 1Gi
+      cpu: 1
+
+postgres:
+  enabled: true
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 1Gi
+      cpu: 1
+  persistence:
+    size: 10Gi
+    storageClass: gp3
+
+rbac:
+  enabled: true
+  deployerGroup: notes-buddy-deployer
+  githubActionsRoleArn: "arn:aws:iam::083777493383:role/notes-buddy-github-actions-role"
