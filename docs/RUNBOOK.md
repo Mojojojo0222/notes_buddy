@@ -10,9 +10,10 @@ How to run this application in every environment, with every problem you'll hit 
 3. [Local — With Docker (docker-compose)](#local--with-docker-docker-compose)
 4. [AWS EKS (Kubernetes)](#aws-eks-kubernetes)
 5. [Helm Charts (Recommended)](#helm-charts-recommended)
-6. [One-Time Setup: .bashrc + Log File](#one-time-setup-bashrc--log-file)
-7. [Commands Quick Reference](#commands-quick-reference)
-8. [Troubleshooting Index](#troubleshooting-index)
+6. [ArgoCD GitOps](#argocd-gitops)
+7. [One-Time Setup: .bashrc + Log File](#one-time-setup-bashrc--log-file)
+8. [Commands Quick Reference](#commands-quick-reference)
+9. [Troubleshooting Index](#troubleshooting-index)
 
 ---
 
@@ -408,6 +409,107 @@ helm upgrade notes-buddy ./helm/notes-buddy -f values-dev.yaml
 
 ---
 
+## ArgoCD GitOps
+
+ArgoCD synchronizes your cluster to match Git. Every change flows Git → ArgoCD → Cluster.
+
+### Installation
+```bash
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+kubectl create ns argocd
+helm install argocd argo/argo-cd -f helm/argocd/values.yaml --namespace argocd
+```
+
+### Access
+```bash
+# Get LoadBalancer URL
+kubectl get svc -n argocd argocd-server -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+
+# Get admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+**Current ArgoCD:**
+```
+URL: http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
+Username: admin
+Password: Jzl-KzKg4AY0gNMG
+```
+
+### Port-forward (if LB not accessible)
+```bash
+kubectl port-forward -n argocd svc/argocd-server 9090:80
+# Then open http://localhost:9090
+```
+
+### Create an Application (via YAML)
+```yaml
+# argocd-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: notes-buddy
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Mojojojo0222/notes_buddy
+    targetRevision: HEAD
+    path: helm/notes-buddy
+    helm:
+      valueFiles:
+        - values-dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: notes-buddy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+```
+```bash
+kubectl apply -f argocd-app.yaml
+```
+
+### Key Commands
+```bash
+# List applications
+argocd app list
+
+# Sync (force deploy)
+argocd app sync notes-buddy
+
+# Rollback to revision 2
+argocd app rollback notes-buddy 2
+
+# See diff between Git and cluster
+argocd app diff notes-buddy
+```
+
+### App-of-Apps Pattern
+Create a root Application that watches a directory. Child Applications in that directory auto-deploy:
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/Mojojojo0222/notes_buddy
+    path: argocd/apps
+  destination:
+    namespace: argocd
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
 ## One-Time Setup: .bashrc + Log File
 
 The app gets its data from `~/.notes_buddy_log`. This file is written by a `PROMPT_COMMAND` hook in your shell.
@@ -489,6 +591,14 @@ tail -f ~/.notes_buddy_log
 | `helm template notes-buddy ./helm/notes-buddy -f values-dev.yaml` | Render YAML without installing |
 | `helm lint ./helm/notes-buddy` | Validate chart syntax |
 | `helm rollback notes-buddy 2 -n notes-buddy` | Rollback to revision 2 |
+| `kubectl -n argocd get pods` | Check ArgoCD pod health |
+| `kubectl -n argocd get svc argocd-server` | Get ArgoCD LoadBalancer URL |
+| `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d` | Get ArgoCD admin password |
+| `kubectl port-forward -n argocd svc/argocd-server 9090:80` | ArgoCD UI via localhost |
+| `argocd app list` | List all ArgoCD applications |
+| `argocd app sync notes-buddy` | Force sync Notes Buddy |
+| `argocd app rollback notes-buddy 2` | Rollback Notes Buddy to revision 2 |
+| `argocd app diff notes-buddy` | Compare Git vs cluster state |
 
 ### Debug
 | Command | When |
@@ -737,6 +847,8 @@ kubectl port-forward -n notes-buddy deployment/notes-buddy 9098:9098
 | `helm/notes-buddy/values-production.yaml` | PRODUCTION environment overrides |
 | `helm/notes-buddy/templates/_helpers.tpl` | Reusable named templates |
 | `helm/notes-buddy/templates/NOTES.txt` | Post-install instructions |
+| `helm/argocd/values.yaml` | ArgoCD Helm values (LoadBalancer, resource limits, RBAC) |
+| `argocd/apps/notes-buddy.yaml` | ArgoCD Application definition for Notes Buddy (TODO) |
 | `terraform/` | Full IaC: VPC, EKS, ECR, IAM, OIDC |
 | `.github/workflows/deploy.yml` | CI/CD pipeline |
 | `docs/AI_CONTEXT.md` | Private AI session memory (DO NOT PUSH) |

@@ -1,0 +1,92 @@
+nameOverride: argocd
+createClusterRoles: true
+
+crds:
+  install: true
+  keep: true
+  annotations:
+    argocd.argoproj.io/sync-options: ServerSideApply=true
+
+global:
+  logging:
+    format: text
+    level: info
+
+configs:
+  params:
+    server.insecure: true
+    server.rootpath: ""
+
+  cm:
+    admin.enabled: "true"
+    statusbadge.enabled: "true"
+    resource.customizations: |
+      admissionregistration.k8s.io/MutatingWebhookConfiguration:
+        ignoreDifferences: |
+          jsonPoint:
+          - /webhooks/0/clientConfig/caBundle
+      admissionregistration.k8s.io/ValidatingWebhookConfiguration:
+        ignoreDifferences: |
+          jsonPoint:
+          - /webhooks/0/clientConfig/caBundle
+
+  rbac:
+    policy.csv: |
+      p, role:admin, applications, *, */*, allow
+      p, role:admin, clusters, *, *, allow
+      p, role:admin, repositories, *, *, allow
+      p, role:admin, projects, *, *, allow
+      g, admin, role:admin
+    policy.default: role:readonly
+    scopes: "[groups]"
+
+server:
+  service:
+    type: LoadBalancer
+    port: 443
+    targetPort: 8080
+  ingress:
+    enabled: false
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+repoServer:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+applicationSet:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+
+controller:
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+
+redis:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
