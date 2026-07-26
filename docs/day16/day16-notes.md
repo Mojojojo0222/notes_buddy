@@ -326,8 +326,122 @@ URL:          http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.
 Features:     Search, Solutions, Tags, Categories, Ingestion, HPA
 ```
 
+---
+
+## Phase 3: Post-Deploy Troubleshooting (Same Session)
+
+After ArgoCD was Synced + Healthy, several issues emerged when the user tested real ingestion.
+
+### Problem 1: ArgoCD OutOfSync — PVC Resize Error
+
+**Symptom:** ArgoCD showed `OutOfSync | Degraded`. Error: "persistentvolumeclaims 'notes-buddy-postgres' is forbidden: only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize"
+
+**Root cause:** `values-staging.yaml` had `persistence.size: 5Gi` but the running PVC was created at `1Gi` (from default values). The `gp2` storage class has `allowVolumeExpansion: false`, so ArgoCD kept failing to patch the PVC.
+
+**Fix:**
+```bash
+# Changed values-staging.yaml: 5Gi → 1Gi to match running PVC
+# Pushed to GitHub → ArgoCD auto-synced
+```
+
+**Why gp2 doesn't support resize:** The `gp2` StorageClass was created by EKS with `allowVolumeExpansion: false`. The in-tree `kubernetes.io/aws-ebs` provisioner doesn't support volume expansion. EBS CSI driver with a custom StorageClass would support it.
+
+### Problem 2: Stale ReplicaSets + Node Capacity Deadlock
+
+**Symptom:** Rolling update created a new RS pod but it stayed Pending. Error: `0/2 nodes are available: 2 Too many pods`.
+
+**Root cause:** Three layers:
+1. Previous manual `kubectl patch deployment` had set `imagePullPolicy: Always`, creating RS `596fdffb8d`.
+2. ArgoCD synced deployment back to `IfNotPresent` (git state), creating new RS `7d96ff7c5d`.
+3. Both t3.small nodes at 11/11 pod capacity — no room for the new RS pod.
+
+Deployment strategy: `rollingUpdate.maxSurge: 1, maxUnavailable: 0` — creates new pod before killing old ones, but with no capacity, the new pod stays Pending forever.
+
+**Fix (multi-step):**
+1. Set `image.pullPolicy: Always` in `values-staging.yaml` → pushed to git → matches running RS
+2. Scaled old RS (`596fdffb8d`) to 0 → freed 2 pod slots
+3. New RS pods scheduled and became Ready
+4. Deleted stale RSes (`7d96ff7c5d`, `9b54f8d4b`, `54576d8ccb`)
+
+### Problem 3: PVC Stuck Terminating
+
+**Symptom:** After `kubectl delete pvc`, the PVC stayed in `Terminating` status. New PVC couldn't be created.
+
+**Root cause:** PVC had a finalizer from the running Postgres pod (volume still in use). Force-delete with `--force --grace-period=0` didn't work — PV still existed.
+
+**Fix:**
+```bash
+# Remove finalizer from stuck PVC
+kubectl patch pvc -n notes-buddy notes-buddy-postgres -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+# Delete old PV that was stuck in Released state
+kubectl delete pv pvc-c525e09b-e823-43c2-87d0-9be3e85c2ab8
+```
+
+After PV deletion, new PVC was provisioned by EBS CSI and Postgres pod was recreated with fresh storage.
+
+### Problem 4: Database Tables Missing After PVC Recreation
+
+**Symptom:** API returned 500: `ERROR: relation "command" does not exist`.
+
+**Root cause:** New PVC was empty. Postgres fresh start → no tables. Hibernate `ddl-auto=update` creates tables on app startup, but the app connected to Postgres before the tables were needed. The error only appeared when an API call triggered a query.
+
+**Fix:** `kubectl rollout restart deployment notes-buddy-app -n notes-buddy` — app restarted, Hibernate detected missing tables and created them via `ddl-auto=update`.
+
+### Problem 5: Rolling Restart Caused Same Capacity Deadlock
+
+**Symptom:** `kubectl rollout restart` created another new RS — had to clean up again.
+
+**Fix:** Scaled old app RS to 0, which deleted the running pods. New RS with updated template then had capacity to schedule its pods.
+
+### Problem 6: `.bashrc` Ingestion Not Working
+
+**Symptom:** User updated `NOTES_BUDDY_URL` in `.bashrc` but commands still didn't appear on dashboard.
+
+**Root cause:** The `log_command()` function had the curl POST lines commented out with `# cluster down, this will just fail quietly in background`. Only the local file write was active.
+
+**Fix:** User uncommented the curl block and added `--data-urlencode` params for `timestamp`, `exitCode`, and `repoName`.
+
+### Problem 7: Seed Data Lost After PVC Recreate
+
+**Symptom:** All 48 test commands were gone after the new PVC provisioned.
+
+**Fix:** Re-seeded with `docs/seed-data.sh` — 46 commands across 2 days (July 25-26) with timestamps spread across realistic working hours.
+
+### Commits Pushed (Post-Deploy Fixes)
+```bash
+89690d2 fix: match postgres PVC size to running state (1Gi) to fix ArgoCD sync error
+2f4be58 fix: set imagePullPolicy=Always in staging to match running state
+```
+
+### Lessons Learned
+
+1. **Volume expansion requires StorageClass support.** `gp2` (in-tree `kubernetes.io/aws-ebs`) doesn't support it. EBS CSI driver + custom StorageClass with `allowVolumeExpansion: true` would allow PVC resize without recreation.
+
+2. **t3.small pod limit (11) is a hard constraint.** On 2 nodes (22 total pods), there's zero room for surge during rolling updates. Either: (a) use `maxSurge: 0` and `maxUnavailable: 1` to avoid the deadlock, or (b) use bigger nodes.
+
+3. **SelfHeal is powerful but painful when running state conflicts with Git.** Manual patches (imagePullPolicy) get reverted. If the running state is correct, the fix is to update Git, not fight SelfHeal.
+
+4. **PVC Terminating with finalizers** — force-delete via `kubectl patch pvc -p '{"metadata":{"finalizers":[]}}'` is the escape hatch.
+
+5. **`ddl-auto=update` is reactive, not proactive.** Tables are created at startup, but if the app starts before Postgres is ready, schema creation silently fails. Restart fixes it.
+
+6. **Ingestion pipeline has 4 failure points:** (a) `.bashrc` function defined, (b) URL uncommented, (c) curl params correct, (d) network reachable. Each can silently break the pipeline.
+
+### Final State
+```
+ArgoCD:      Synced | Healthy
+App URL:     http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.amazonaws.com
+ArgoCD URL:  http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
+Data:        46 commands across 2 days (July 25-26)
+Seed script: docs/seed-data.sh (re-runnable)
+Ingestion:   Live — user's terminal commands flowing in
+```
+
 ### Key Files
 - `helm/argocd/values.yaml` — ArgoCD config (LoadBalancer, resource limits, dex disabled)
 - `argocd/apps/notes-buddy.yaml` — Application CRD (points to `helm/notes-buddy` with `values-staging.yaml`)
+- `helm/notes-buddy/values-staging.yaml` — Staging profile with `pullPolicy: Always` + `persistence.size: 1Gi`
+- `docs/seed-data.sh` — Re-seed script (46 commands, 2 days)
 - `docs/COMMANDS.md` — All application commands reference
 - `docs/COMMANDS_DAYWISE.md` — Day-wise implementation commands

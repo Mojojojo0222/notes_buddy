@@ -315,7 +315,7 @@ helm/notes-buddy/
 | Ingress | disabled | disabled | enabled + TLS |
 | RBAC | disabled | enabled | enabled |
 | App resources | 256Mi/512Mi | 384Mi/768Mi | 512Mi/1Gi |
-| Postgres storage | 1Gi | 5Gi | 10Gi (gp3) |
+| Postgres storage | 1Gi | 1Gi | 10Gi (gp3) |
 | Total K8s resources | 8 | 11 | 13 |
 
 ### Lifecycle Commands
@@ -866,7 +866,82 @@ aws iam list-attached-role-policies --role-name notes-buddy-node-role
 docker push 083777493383.dkr.ecr.ap-south-1.amazonaws.com/notes-buddy:latest
 ```
 
-### 13. ALB Takes Too Long to Provision
+### 13. PVC Stuck Terminating
+**Error:** `kubectl get pvc -n notes-buddy` shows `STATUS: Terminating` that never completes.
+**Meaning:** A finalizer (usually from a running pod still using the volume) is blocking deletion.
+**Fix:**
+```bash
+# Remove finalizers from the stuck PVC
+kubectl patch pvc -n notes-buddy <pvc-name> -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+# If the underlying PV is still present, delete it
+kubectl delete pv <pv-name>
+```
+**Background:** When a PVC is force-deleted while a pod is still using the volume, the finalizer prevents full cleanup. This is a safety mechanism that sometimes needs manual override.
+
+### 14. ArgoCD OutOfSync — PVC Cannot Be Resized
+**Error:** `error when patching: persistentvolumeclaims "notes-buddy-postgres" is forbidden: only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize`
+**Meaning:** The PVC size in Git differs from the running PVC, and the StorageClass doesn't support volume expansion.
+**Root cause:** The `gp2` StorageClass (in-tree `kubernetes.io/aws-ebs`) has `allowVolumeExpansion: false`. Only EBS CSI driver with a custom StorageClass supports resize.
+**Fix:** Either:
+- Match the Helm values to the running PVC size (simplest)
+- Or delete the PVC and let it be recreated at the desired size (data loss)
+```bash
+# Option A: Match Git to cluster
+# Edit values-dev/staging.yaml to use the running size, push to git
+
+# Option B: Delete and recreate PVC (data loss)
+kubectl delete pvc -n notes-buddy notes-buddy-postgres
+kubectl patch pvc -n notes-buddy notes-buddy-postgres -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null; true
+# Then let ArgoCD recreate it at the desired size
+```
+
+### 15. Rolling Update Deadlock (TooManyPods)
+**Error:** `0/2 nodes are available: 2 Too many pods.`
+**Where:** Pod stays Pending after a deployment update.
+**Meaning:** The RollingUpdate strategy (`maxSurge: 1, maxUnavailable: 0`) creates a new pod before killing old ones, but both nodes are at pod capacity.
+**Fix:**
+```bash
+# Find the old ReplicaSet (the one with running pods)
+kubectl get rs -n notes-buddy
+
+# Scale it to 0 to free capacity
+kubectl scale rs -n notes-buddy <old-rs-name> --replicas=0
+
+# The new ReplicaSet pods will now schedule
+kubectl get pods -n notes-buddy -w
+```
+**Prevention:** On small nodes, consider `maxSurge: 0, maxUnavailable: 1` for the deployment strategy, or use larger instance types.
+
+### 16. App Returns 500 — "relation 'command' does not exist"
+**Error:** `org.postgresql.util.PSQLException: ERROR: relation "command" does not exist`
+**Meaning:** The database tables don't exist — usually after a PVC recreation or database reset.
+**Fix:** Restart the app so Hibernate's `ddl-auto=update` creates the schema:
+```bash
+kubectl rollout restart deployment notes-buddy-app -n notes-buddy
+```
+**Note:** If Postgres wasn't ready when the app first started, Hibernate silently skips schema creation. The error only appears when a query is attempted.
+
+### 17. Ingested Commands Not Appearing on Dashboard
+**Error:** Commands sent via `curl POST /ingest` return `saved` but don't show on the dashboard.
+**Where:** User's terminal → `.bashrc` → EKS ALB
+**Three things to check:**
+```bash
+# 1. Is NOTES_BUDDY_URL set and uncommented?
+grep NOTES_BUDDY_URL ~/.bashrc
+
+# 2. Is the curl POST uncommented in log_command()?
+grep -A5 "send to EKS" ~/.bashrc
+
+# 3. Is the ALB URL reachable?
+curl -s http://YOUR_ALB_URL/summary
+```
+**Common fixes:**
+- Uncomment the curl block in `log_command()`
+- Add `--data-urlencode "timestamp=$(date '+%Y-%m-%dT%H:%M:%S')"` and `--data-urlencode "exitCode=${exit_code}"` params
+- Verify `NOTES_BUDDY_URL` has no trailing slash
+
+### 18. ALB Takes Too Long to Provision
 **Error:** `curl: (28) Connection timeout` when hitting the LoadBalancer URL
 **Meaning:** The ALB (Application Load Balancer) is still provisioning. This takes 2-5 minutes after `kubectl apply -f k8s/notes-buddy.yaml`.
 **Fix:** Wait. Check status:
