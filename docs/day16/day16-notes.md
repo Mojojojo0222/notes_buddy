@@ -155,7 +155,7 @@ curl http://localhost:9090/api/version
 
 ---
 
-## Problems Encountered (Summary)
+## Problems Encountered (Session 1 — Cluster Rebuild)
 
 | # | Problem | Root Cause | Fix |
 |---|---------|------------|-----|
@@ -168,34 +168,166 @@ curl http://localhost:9090/api/version
 
 ---
 
-## Notes for Next Session (Where to Continue)
+## Phase 2: Deploy Notes Buddy via ArgoCD
 
-### Goal: Deploy Notes Buddy via ArgoCD
+### Step 1: Create Application CRD
 
-1. **Create the ArgoCD Application YAML** — point to the Helm chart in GitHub
-2. **Test auto-sync** — change values.yaml in GitHub → ArgoCD picks it up
-3. **Test self-heal** — manually delete a pod → ArgoCD recreates it
-4. **App-of-apps pattern** — one root app deploys multiple child apps
+Created `argocd/apps/notes-buddy.yaml` — the ArgoCD Application definition:
 
-### ArgoCD Dashboard URL
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: notes-buddy
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Mojojojo0222/notes_buddy
+    targetRevision: HEAD
+    path: helm/notes-buddy
+    helm:
+      valueFiles:
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: notes-buddy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
 ```
-http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
-Username: admin
-Password: Jzl-KzKg4AY0gNMG
+
+**The 5-part mental model:**
+1. `metadata` — name + namespace (argocd namespace)
+2. `project` — default (built-in)
+3. `source` — GitHub repo + folder + helm values
+4. `destination` — cluster + target namespace
+5. `syncPolicy` — auto-sync + prune + self-heal + create-namespace
+
+### Step 2: Apply and Verify
+
+```bash
+kubectl apply -f argocd/apps/notes-buddy.yaml
+# → application.argoproj.io/notes-buddy created
+
+# Check sync status
+kubectl get application -n argocd notes-buddy
+# → Synced, Healthy
+
+# Pods come up automatically
+kubectl get pods -n notes-buddy -w
+# → notes-buddy-app, notes-buddy-postgres
 ```
 
-### Key Files Already Created
-- `helm/argocd/values.yaml` — ArgoCD Helm values (LoadBalancer, resource limits, RBAC)
-- Application YAML needs to be created in `argocd/apps/notes-buddy.yaml`
+### Step 3: Switch from Dev (ClusterIP) to Staging (LoadBalancer)
 
-### Port-forward (if UI inaccessible via LB)
+Changed `valueFiles` from `values-dev.yaml` → `values-staging.yaml`:
+- Service type: ClusterIP → LoadBalancer (public URL)
+- Replicas: 1 → 2
+- HPA: disabled → enabled (2-4)
+
+**New URL:** `http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.amazonaws.com`
+
+### Step 4: Verify All Features
+
+| Feature | Status | How |
+|---------|--------|-----|
+| Category detection | ✅ | All 9 categories auto-detected |
+| Search | ✅ | Full-text ILIKE across 5 fields |
+| Solution cards | ✅ | 3 repeated errors with fixes |
+| Tagging | ✅ | Inline edit + API |
+| Ingestion (exit codes) | ✅ | exitCode stored per command |
+| Dashboard HTML | ✅ | Served via ALB |
+
+### Step 5: Update .bashrc for Ingestion
+
+```bash
+NOTES_BUDDY_URL="http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.amazonaws.com"
+```
+
+Added to `log_command()`: curl POST with `--data-urlencode exitCode=${exit_code}`.
+
+---
+
+## Problems Encountered (Session 2 — Application Deploy)
+
+| # | Problem | Root Cause | Fix |
+|---|---------|------------|-----|
+| 7 | **Pod capacity exhausted** (t3.small max 11) | ArgoCD (7 pods) + system daemons + CloudWatch filled both nodes | Disabled dex + notifications in ArgoCD values. Reduced all ArgoCD resource requests. Scaled EBS CSI to 1 replica |
+| 8 | **App pods stuck Pending** (TooManyPods) | Rolling update couldn't create new pod before killing old one | Forced delete old pods + scale old ReplicaSets to 0 |
+| 9 | **Old Docker image cached on nodes** (`IfNotPresent` pull policy) | Node had old `latest` image from earlier deploy | `kubectl patch deployment` with `imagePullPolicy: Always`. Rebuilt with `--no-cache` and pushed fresh `latest` |
+| 10 | **Solution cards empty initially** | 48 test commands ingested by old image (no exitCode field) | Re-ingested failed commands with new image → exitCodes stored correctly |
+| 11 | **Helm upgrade re-created disabled components** | Edit replaced block that included `dex.enabled: false` | Added settings back to values.yaml |
+| 12 | **Helm upgrade got stuck Pending** | Too many changes at once — StatefulSet controller couldn't reconcile | Deleted old ReplicaSets manually, ran clean upgrade |
+
+---
+
+## Trade-offs / Decisions (Day 16)
+
+| Decision | Why | Trade-off |
+|----------|-----|-----------|
+| Disabled dex + notifications in ArgoCD | Free pod slots on t3.small | No SSO, no Slack alerts in dev |
+| Reduced ArgoCD resource requests (controller 256Mi, others 128Mi) | Fit everything on 2 nodes | Performance deg if cluster gets busy |
+| Use `values-dev.yaml` initially, then switch to `values-staging.yaml` | Start minimal, add LB when needed | Must update Application YAML to switch |
+| `imagePullPolicy: Always` for dev | Ensures fresh image every deploy | Slower pod startup (pulls every time) |
+| Built `docker build --no-cache` | Docker cache was using stale layers | Slower build (5 min instead of 30s) |
+
+---
+
+## ArgoCD Dashboard Access
+
+### Via LoadBalancer (preferred)
+```
+URL:        http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
+Username:   admin
+Password:   Jzl-KzKg4AY0gNMG
+```
+
+### Via Port-Forward (if LB not accessible)
 ```bash
 kubectl port-forward -n argocd svc/argocd-server 9090:80
-# Then visit http://localhost:9090
+# → http://localhost:9090
 ```
 
-### Terraform State Is Clean Now
-```bash
-terraform plan    # should show: No changes. Your infrastructure matches the configuration.
-terraform apply   # only needed if infra drifts
+### What You Can Do in the UI
+1. **Applications** → see notes-buddy, sync status (green = healthy)
+2. **Click the app** → see all K8s resources it manages
+3. **APP DETAILS** → `SYNC` button to force sync, `REFRESH` to re-read Git
+4. **DIFF** tab → shows differences between Git and cluster
+5. **HISTORY** → revision timeline, rollback to any version
+6. **Settings** → repositories, projects, clusters
+
+---
+
+## ArgoCD Auto-Sync Confirmation
+
 ```
+You edit helm/notes-buddy/values-dev.yaml
+  → git add, git commit, git push to main
+  → ArgoCD polls GitHub (default: 3 min interval)
+  → Detects drift: "Git has different values than cluster"
+  → Auto-syncs: applies the change to EKS
+  → If drift was manual (kubectl edit), SelfHeal reverts it
+```
+
+---
+
+## Current Cluster State (End of Day 16)
+
+```
+EKS:          2 t3.small nodes, K8s 1.31
+Terraform:    30 resources, S3 state + DynamoDB locks
+ArgoCD:       5 pods (dex + notifications disabled), v3.4.5
+App:          Notes Buddy + PostgreSQL (via Helm staging profile)
+URL:          http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.amazonaws.com
+Features:     Search, Solutions, Tags, Categories, Ingestion, HPA
+```
+
+### Key Files
+- `helm/argocd/values.yaml` — ArgoCD config (LoadBalancer, resource limits, dex disabled)
+- `argocd/apps/notes-buddy.yaml` — Application CRD (points to `helm/notes-buddy` with `values-staging.yaml`)
+- `docs/COMMANDS.md` — All application commands reference
+- `docs/COMMANDS_DAYWISE.md` — Day-wise implementation commands

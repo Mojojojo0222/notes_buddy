@@ -432,10 +432,19 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 
 **Current ArgoCD:**
 ```
-URL: http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
-Username: admin
-Password: Jzl-KzKg4AY0gNMG
+ArgoCD URL: http://aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com
+Username:   admin
+Password:   Jzl-KzKg4AY0gNMG
+
+App URL:    http://a4222470eaec245a29c7720b811fb836-1696657361.ap-south-1.elb.amazonaws.com
 ```
+
+### ArgoCD Pod Optimization (t3.small)
+Default ArgoCD installs 7 components. On t3.small (11 pods/node), we disabled:
+- `dex.enabled: false` — SSO not needed for dev
+- `notifications.enabled: false` — Slack/email alerts not needed
+- Reduced resource requests: controller 256Mi, all others 128Mi, redis 64Mi
+- Result: 5 running pods instead of 7
 
 ### Port-forward (if LB not accessible)
 ```bash
@@ -445,7 +454,7 @@ kubectl port-forward -n argocd svc/argocd-server 9090:80
 
 ### Create an Application (via YAML)
 ```yaml
-# argocd-app.yaml
+# argocd/apps/notes-buddy.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -459,7 +468,7 @@ spec:
     path: helm/notes-buddy
     helm:
       valueFiles:
-        - values-dev.yaml
+        - values-staging.yaml      # change to values-dev.yaml for ClusterIP
   destination:
     server: https://kubernetes.default.svc
     namespace: notes-buddy
@@ -471,8 +480,17 @@ spec:
       - CreateNamespace=true
 ```
 ```bash
-kubectl apply -f argocd-app.yaml
+kubectl apply -f argocd/apps/notes-buddy.yaml
 ```
+
+### The 5-Part Application CRD
+| Section | Description |
+|---------|-------------|
+| `metadata` | Name + namespace (must be `argocd`) |
+| `project` | ArgoCD project (default is fine for single-team) |
+| `source` | Git repo URL + path + revision + Helm values |
+| `destination` | Target cluster (`kubernetes.default.svc`) + namespace |
+| `syncPolicy` | Auto-sync + prune (delete removed resources) + selfHeal (revert drifts) |
 
 ### Key Commands
 ```bash
@@ -487,9 +505,61 @@ argocd app rollback notes-buddy 2
 
 # See diff between Git and cluster
 argocd app diff notes-buddy
+
+# Or use kubectl (no argocd CLI needed)
+kubectl get application -n argocd notes-buddy
+kubectl get application -n argocd notes-buddy -o yaml
 ```
 
-### App-of-Apps Pattern
+### ArgoCD UI
+1. Navigate to the ArgoCD URL
+2. Login with admin / password
+3. **Applications** tab → see `notes-buddy` with green circle (Healthy)
+4. Click the app → see all managed K8s resources
+5. **APP DETAILS** → SYNC button, REFRESH button
+6. **DIFF** tab → see Git vs cluster differences
+7. **HISTORY** → rollback to any previous revision
+8. **Settings** → repositories, projects, cluster management
+
+### Auto-Sync Flow
+```bash
+# 1. Edit Helm values locally
+# 2. Push to GitHub
+git add helm/notes-buddy/values-dev.yaml
+git commit -m "change replicas to 3"
+git push
+# 3. ArgoCD detects change within 3 min → auto-syncs
+# 4. Cluster updates automatically — no kubectl or helm needed
+```
+
+### Troubleshooting ArgoCD on t3.small
+
+**Pod capacity exhausted:**
+```bash
+# Check node pod count
+kubectl get pods --all-namespaces -o wide | wc -l
+
+# Free slots: scale down non-critical components
+kubectl scale deployment -n kube-system ebs-csi-controller --replicas=1
+```
+
+**Old image cached:**
+```bash
+kubectl patch deployment -n notes-buddy notes-buddy-app -p \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"notes-buddy","imagePullPolicy":"Always"}]}}}}'
+```
+
+**Multiple ReplicaSets stuck:**
+```bash
+kubectl scale rs -n notes-buddy <old-rs-name> --replicas=0
+kubectl delete pod -n notes-buddy <stuck-pod> --force --grace-period=0
+```
+
+**Solution cards empty:**
+Commands ingested by old images don't have exitCode/tag fields.
+Re-ingest failed commands after deploying new image.
+
+### App-of-Apps Pattern (Future)
 Create a root Application that watches a directory. Child Applications in that directory auto-deploy:
 ```yaml
 apiVersion: argoproj.io/v1alpha1
