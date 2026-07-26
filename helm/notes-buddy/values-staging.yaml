@@ -40,7 +40,7 @@ postgres:
       memory: 512Mi
       cpu: 500m
   persistence:
-    size: 5Gi
+    size: 1Gi
 
 rbac:
   enabled: true
