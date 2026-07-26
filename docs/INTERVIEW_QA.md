@@ -1128,3 +1128,111 @@ For Notes Buddy: 15 days for a single person with no prior K8s experience. A tea
 | Helm | "Templated Kubernetes manifests with values cascade, lifecycle management, checksum-driven restarts." |
 | Multi-stage Docker | "Build stage has Maven+JDK (600MB), runtime stage has only JRE+JAR (180MB)." |
 | SRE Golden Signals | "Latency, Traffic, Errors, Saturation — measure everything, SLO what matters, error budget the rest." |
+
+---
+
+## ArgoCD Troubleshooting — Day 16 Real Incidents
+
+### Q: "ArgoCD shows OutOfSync with a PVC patch error. How do you debug?"
+
+**Symptom:** Application status is `OutOfSync | Degraded`. Error message: "persistentvolumeclaims is forbidden: only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize."
+
+**Debug flow:**
+1. `kubectl get application -n argocd notes-buddy -o yaml` → check `status.conditions` for the exact error
+2. `kubectl get pvc -n notes-buddy` → check current PVC size vs Helm values
+3. `kubectl get storageclass gp2 -o yaml` → check `allowVolumeExpansion: false` (gp2 on EKS doesn't support resize)
+4. Check `helm/notes-buddy/values-staging.yaml` — find `persistence.size`
+
+**Root cause:** Git has `5Gi`, running PVC is `1Gi`. The `gp2` StorageClass has `allowVolumeExpansion: false` — ArgoCD can't patch the PVC to match Git.
+
+**Fix:** Update Git to match the running state (1Gi), not the other way around. Push to GitHub → ArgoCD auto-syncs.
+
+**Lesson:** Not all drift should be fixed by changing the cluster. When the running resource can't be modified (PVC resize, immutable fields), change Git to match reality.
+
+### Q: "How do you recover from a deadlocked rolling update on fully loaded nodes?"
+
+**Context:** 2 t3.small nodes, 11 pods each (max capacity). Deployment strategy: `RollingUpdate` with `maxSurge: 1, maxUnavailable: 0`.
+
+**Problem sequence:**
+1. A new ReplicaSet is created (pod template changed)
+2. New pod stays `Pending` — `0/2 nodes available: 2 Too many pods`
+3. Old ReplicaSet pods stay running (maxUnavailable: 0 prevents scale-down)
+4. System is deadlocked — no way to complete the rollout
+
+**Immediate fix:**
+```bash
+# 1. Identify the old RS (the one running the current pods)
+kubectl get rs -n notes-buddy -l app.kubernetes.io/component=app
+
+# 2. Scale old RS to 0 — frees capacity
+kubectl scale rs -n notes-buddy <old-rs-name> --replicas=0
+
+# 3. New pods schedule and become Ready
+kubectl get pods -n notes-buddy -w
+```
+
+**Long-term prevention:**
+- Option A: Larger nodes (e.g., t3.medium, 17 pods each) — more headroom
+- Option B: Change deployment strategy to `maxSurge: 0, maxUnavailable: 1` — kills old pod before creating new one
+- Option C: Use PDB + HPA to maintain spare capacity
+- Option D: Add a node via cluster autoscaler before triggering the update
+
+**Trade-off:** `maxSurge: 0, maxUnavailable: 1` causes brief downtime during rolling updates (1 replica unavailable). `maxSurge: 1, maxUnavailable: 0` requires spare capacity but has zero downtime.
+
+### Q: "A PVC is stuck in Terminating. How do you force-delete it?"
+
+**Problem:** `kubectl delete pvc` → PVC stays `Terminating` forever.
+
+**Root cause:** A finalizer is blocking deletion. Usually because a pod still has the volume mounted, or the PV is still referenced.
+
+**Fix:**
+```bash
+# Step 1: Remove finalizers
+kubectl patch pvc -n <ns> <pvc-name> -p '{"metadata":{"finalizers":[]}}' --type=merge
+
+# Step 2: If PV still exists in Released/Terminating state, delete it
+kubectl delete pv <pv-name>
+
+# Step 3: New PVC will be provisioned by the StorageClass
+kubectl get pvc -n <ns> -w
+```
+
+**Why this happens:** When you force-delete a PVC with `--force --grace-period=0`, Kubernetes removes the resource from etcd but the actual volume on the storage backend still exists. The finalizer prevents orphaned volumes. Removing the finalizer is the escape hatch — but you lose the data on the volume.
+
+**Production recommendation:** Before force-deleting, verify the pod isn't critical. For stateful workloads (PostgreSQL), back up the data first. In our case, the data was seed data, so loss was acceptable.
+
+### Q: "How does ArgoCD self-heal interact with manual kubectl patches?"
+
+**Scenario:** A developer runs `kubectl patch deployment ... set imagePullPolicy=Always`. Later, ArgoCD's self-heal reverts it.
+
+**Why this happens:** ArgoCD's self-heal runs every 3 minutes (default poll interval). It compares every resource's current state against the desired state from Git. Any difference is reverted automatically.
+
+**The problem:** The manual patch was intentional — the developer needed `Always` to force fresh image pulls. But SelfHeal reverted it to `IfNotPresent` (the Git state). This created a new ReplicaSet (new pod template), but the old RS pods kept running with `Always`. The new RS pod couldn't schedule (no capacity). Deadlock.
+
+**The fix:** Update Git to match the intentional change:
+```bash
+# Edit the Helm values to include Always
+# values-staging.yaml
+image:
+  pullPolicy: Always
+
+# Push to GitHub → ArgoCD syncs → now Always is the desired state
+```
+
+**Key insight:** Self-heal is a safety net against accidental drift. If the drift is intentional, the fix is always to update Git, not fight the self-heal. `argocd app disable-self-heal` is available but defeats the purpose of GitOps.
+
+### Q: "After deleting a PVC, the app returns 500: 'relation command does not exist'. How do you fix it?"
+
+**Root cause:** The PVC was the database volume for PostgreSQL. After deletion, the new PVC is empty — no database, no tables. Hibernate's `ddl-auto=update` creates tables at startup, but the app connected to the fresh DB before any query was attempted. The error only appears when an API call triggers a query.
+
+**Fix:**
+```bash
+kubectl rollout restart deployment notes-buddy-app -n notes-buddy
+```
+
+**Why restart fixes it:** On startup, Hibernate checks `SELECT 1 FROM command` — table doesn't exist → `ddl-auto=update` runs `CREATE TABLE`. After restart, all queries succeed.
+
+**Why it didn't create tables the first time:** The app started before Postgres was fully initialized (or the fresh PVC wasn't ready yet). Hibernate silently fails schema creation if the DB connection fails. The app starts, but queries fail later.
+
+**Prevention:** Add an init container that waits for the database to be ready and schema to be created. Or use a startup script that runs `CREATE TABLE IF NOT EXISTS` before the app starts.
+
