@@ -2,6 +2,9 @@
 # Production-like but smaller. LoadBalancer, HPA, but no PDB or Ingress.
 # Use: helm install notes-buddy ./helm/notes-buddy -f values-staging.yaml
 
+image:
+  pullPolicy: Always
+
 app:
   replicas: 2
   service:
