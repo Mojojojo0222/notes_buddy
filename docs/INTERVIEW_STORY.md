@@ -596,31 +596,86 @@ helm/notes-buddy/
 
 ---
 
-### Phase 14: ArgoCD GitOps (Day 16 — Started)
+### Phase 14: ArgoCD GitOps (Day 16 — Complete)
 
 **Goal:** Replace push-based CI/CD (GitHub Actions deploys to cluster) with pull-based GitOps (ArgoCD watches Git and syncs automatically).
 
 **What was done:**
 1. **EKS cluster recreated** via Terraform — 30 resources, 2 nodes, EBS CSI + CloudWatch addons
 2. **Terraform troubleshooting** — state lock recovery, resource imports, EBS CSI addon `service_account_role_arn` fix
-3. **ArgoCD installed** via `argo/argo-cd` Helm chart — 7 pods, LoadBalancer enabled, admin access configured
+3. **ArgoCD installed** via `argo/argo-cd` Helm chart — 5 pods (dex + notifications disabled for t3.small), LoadBalancer enabled
+4. **Application CRD created** (`argocd/apps/notes-buddy.yaml`) — points to `helm/notes-buddy` with `values-staging.yaml`
+5. **Notes Buddy deployed via ArgoCD** — Synced + Healthy on first apply
+6. **All features verified** — search, solution cards, tagging, category detection, ingestion with exit codes
+7. **Docker image rebuilt with `--no-cache`** — fresh compile of search + solutions endpoints
+8. **`.bashrc` ingestion pipeline updated** with new ALB URL
 
-**ArgoCD configuration (helm/argocd/values.yaml):**
-- `server.service.type: LoadBalancer` — external access at `aa335e8d179da4eb7b1035e630ff0e41-1249820149.ap-south-1.elb.amazonaws.com`
-- `server.insecure: true` — no TLS cert needed for dev
-- Resource limits for all 7 components (controller: 1Gi, server: 512Mi, repo: 512Mi, redis: 256Mi)
-- RBAC: admin role with full application/cluster/repo/project access
-- CRDs managed with Helm, kept on uninstall
+**ArgoCD optimization for t3.small (2 nodes, 11 pods each):**
+- Disabled dex-server (SSO — not needed for dev)
+- Disabled notifications-controller (Slack/email — not needed)
+- Reduced resource requests: controller 256Mi, server/repo/appset 128Mi, redis 64Mi
+- Scaled EBS CSI controller to 1 replica (from 2 — no HA needed on 2 nodes)
 
-**Problems encountered during rebuild (6 issues):**
-1. Terraform apply timeout (9+ min for cluster) → increased timeout
-2. State lock stuck after timeout → `terraform force-unlock`
-3. EntityAlreadyExists on re-apply → imported 4 resources via `terraform import`
-4. EBS CSI addon stuck CREATING (10+ min) → missing `service_account_role_arn` in module
-5. Port 8080 in use on Windows → used port 9090 for port-forward
-6. ArgoCD CLI background process didn't persist in Git Bash → use declarative Application YAML instead
+**The ArgoCD Application CRD — 5-part mental model:**
+| Section | Value | Why |
+|---------|-------|-----|
+| `metadata` | `name: notes-buddy, namespace: argocd` | App lives in argocd namespace |
+| `spec.project` | `default` | Built-in ArgoCD project |
+| `spec.source` | GitHub repo → `path: helm/notes-buddy` → `values-staging.yaml` | What Git folder to watch |
+| `spec.destination` | `namespace: notes-buddy` | Where in K8s to deploy |
+| `spec.syncPolicy` | `auto-sync, prune, selfHeal, CreateNamespace` | How to sync |
 
-**Next:** Create ArgoCD Application CRD for Notes Buddy, test auto-sync + self-heal, then app-of-apps pattern.
+**Key GitOps flow:**
+```
+Developer edits Helm values → git push → ArgoCD polls (3 min) → detects drift → auto-syncs
+Self-heal: if someone does `kubectl edit deployment`, ArgoCD reverts to Git state
+Prune: if a file is deleted from Git, the K8s resource is deleted too
+```
+
+**Problems encountered during deploy (6 new issues):**
+1. t3.small pod capacity (11/node) → disabled dex + notifications, reduced resource requests
+2. Rolling update stuck — TooManyPods → force-deleted old ReplicaSets
+3. Old Docker image cached on nodes (`IfNotPresent`) → `imagePullPolicy: Always` + `--no-cache` rebuild
+4. Solution cards empty initially → commands ingested by old image (no exitCode field)
+5. Helm upgrade re-created disabled components → values.yaml edits got overwritten
+6. Helm upgrade stuck Pending → multiple ReplicaSets in conflicting state
+
+### Post-Deploy Troubleshooting (7 More Issues Fixed)
+
+After the initial deploy was Synced+Healthy, a second round of issues emerged during testing:
+
+**7. PVC resize deadlock** — ArgoCD Synced but Degraded. `gp2` StorageClass doesn't support volume expansion (allowVolumeExpansion: false). ArgoCD kept failing to patch PVC from 1Gi to 5Gi. Fixed values-staging.yaml to match running PVC size (1Gi) and pushed to git.
+
+**8. Stale ReplicaSet from manual imagePullPolicy patch** — A previous `kubectl patch` had set `Always`, creating RS-A. ArgoCD self-healed back to `IfNotPresent`, creating RS-B. RS-A pods stayed running, RS-B pod stayed Pending (no capacity). Fixed by setting `imagePullPolicy: Always` in the Helm chart to match the running state.
+
+**9. Node capacity deadlock (rolling update)** — Both t3.small nodes at 11/11 max. Deployment strategy `maxSurge: 1, maxUnavailable: 0` couldn't schedule new pods. Fixed by scaling old RS to 0, freeing capacity for new RS.
+
+**10. PVC stuck Terminating** — Force-deleted PVC had a finalizer from the running Postgres pod. `kubectl patch pvc -p '{"metadata":{"finalizers":[]}}'` was the escape hatch.
+
+**11. Database tables missing after PVC recreate** — New PVC had no data. Relation "command" does not exist. Fixed by restarting the app — Hibernate `ddl-auto=update` created the schema.
+
+**12. Rolling restart re-deadlocked** — `kubectl rollout restart` triggered another deadlock (same capacity issue). Had to clean up RSes again.
+
+**13. `.bashrc` ingestion still commented out** — The user's `log_command()` had curl POST lines disabled from the cluster-down period. Uncommented and added timestamp/exitCode/repoName params.
+
+**What was pushed to fix (3 commits):**
+```
+git commit: "fix: match postgres PVC size to running state (1Gi)"
+git commit: "fix: set imagePullPolicy=Always in staging to match running state"
+```
+
+**Trade-offs made:**
+- Disabled SSO (dex) and alerts (notifications) for pod capacity — acceptable for dev
+- Reduced ArgoCD resource requests below defaults — performance deg if cluster gets busy
+- Used `imagePullPolicy: Always` — slower startup but guarantees fresh code
+- ALB URL changes each cluster rebuild — would fix with Route53/CNAME in production
+- PVC size pinned to 1Gi in staging — can't be changed without EBS CSI StorageClass with volume expansion support
+
+**Interview story:**
+> "I implemented GitOps with ArgoCD — the cluster polls GitHub for changes instead of CI/CD pushing to the cluster. The Application CRD is a 5-part contract: metadata, project, source (Git path), destination (namespace), and sync policy. ArgoCD auto-syncs, self-heals drifts, and prunes deleted resources. The challenge was fitting ArgoCD + system daemons + the app on 2 t3.small nodes (11 pods max each). Solution: disabled unnecessary ArgoCD components (dex, notifications) and reduced resource requests. The result: any Git push to the Helm chart folder automatically updates the cluster — no kubectl, no Helm CLI, no manual steps."
+
+**Another ArgoCD story — dealing with drift and capacity:**
+> "After the initial deploy, ArgoCD kept showing as Degraded. Two issues: a PVC size mismatch (5Gi in Git vs 1Gi running) and a stale ReplicaSet from a previous manual imagePullPolicy patch. The gp2 storage class doesn't support volume expansion, so ArgoCD couldn't reconcile the PVC. And the rolling update was stuck because both t3.small nodes were at max capacity (11 pods each), so the new RS pod couldn't schedule. The fix: updated the Helm chart to match the running state (1Gi PVC, Always pullPolicy), pushed to Git, and ArgoCD auto-synced to Healthy. Then had to clean up stale ReplicaSets and restart the app to trigger Hibernate schema creation on the fresh PVC. The lesson: GitOps works, but manual patches can create drift that only Git can fix."
 
 ---
 
