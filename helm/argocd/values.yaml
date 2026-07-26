@@ -40,6 +40,12 @@ configs:
     policy.default: role:readonly
     scopes: "[groups]"
 
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
 server:
   service:
     type: LoadBalancer
@@ -49,44 +55,44 @@ server:
     enabled: false
   resources:
     limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
       cpu: 250m
-      memory: 256Mi
-
-repoServer:
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
-      memory: 256Mi
-
-applicationSet:
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
-      memory: 256Mi
-
-controller:
-  resources:
-    limits:
-      cpu: 1000m
-      memory: 1Gi
-    requests:
-      cpu: 500m
-      memory: 512Mi
-
-redis:
-  resources:
-    limits:
-      cpu: 200m
       memory: 256Mi
     requests:
       cpu: 100m
       memory: 128Mi
+
+repoServer:
+  resources:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+applicationSet:
+  resources:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+controller:
+  resources:
+    limits:
+      cpu: 250m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+redis:
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
