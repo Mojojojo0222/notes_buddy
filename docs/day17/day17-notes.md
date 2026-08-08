@@ -234,3 +234,55 @@ or higher `failureThreshold` would fix the fragility.
 | 04:35 | C8 search storm at 897k rows: app-wide failure, 5.7s query plan confirmed |
 | 05:00 | Recovery: crash loop persisted (node mem 101%), scaled to 2, force-deleted pods |
 | 05:30 | 3/4 pods Ready; wrap-up, notes written |
+
+---
+
+## 7. Addendum — CI/CD Pipeline Rewire (same night, after notes)
+
+**Why:** user noticed GitHub Actions last ran 24 July and asked about the flow.
+Commit `8c98d35` had commented out the `push:` trigger (Day 10 era, pre-ArgoCD).
+Old workflow was imperative: build → ECR → `kubectl set image` → rollout status
+(bypassed ArgoCD). Also broken: chart had `image.tag: latest`, and ArgoCD only
+re-syncs when the **repo manifest changes** — a new `latest` image in ECR never
+changes the repo, so ArgoCD never rolled pods.
+
+**The fix — rewritten `.github/workflows/deploy.yml`:**
+
+```
+git commit + push → main
+  └─ GitHub Actions (trigger: src/ | pom.xml | Dockerfile | helm/** | workflow)
+       ├─ OIDC assume role (no AWS keys on GitHub)
+       ├─ docker build + push notes-buddy:{sha} AND notes-buddy:latest → ECR
+       ├─ bump image.tag in helm/notes-buddy/values-staging.yaml to {sha}
+       └─ commit back "[skip ci]" + push
+            └─ ArgoCD polls repo (~3 min) → auto-sync (prune+selfHeal)
+                 └─ Deployment rollout → pods pull {sha} image
+```
+
+Key decisions (interview material):
+- **`[skip ci]` on bot commit** = prevents infinite pipeline loop (bot commit
+  doesn't re-trigger the workflow).
+- **`contents: write` permission** = GITHUB_TOKEN can commit back to main.
+- **`ref: main, fetch-depth: 0`** in checkout = branch checked out (not
+  detached HEAD) so the push-back works.
+- **Path filters** = docs-only commits don't burn a build.
+- **Actions = CI only** (build + push artifact); **ArgoCD = CD** (deploy).
+  Textbook split: "CI builds, GitOps ships."
+- Chart uses `tag: {sha}` + `pullPolicy: Always` → immutable, traceable,
+  rollback = `git revert` the tag bump (ArgoCD auto-syncs back).
+
+**What terraform does (and does NOT do):**
+- Terraform is **local-only** — no remote state, no GitHub trigger, no CI.
+- `terraform plan` + `terraform apply` run from this machine (~30 min),
+  human-initiated, 30 resources: VPC/subnets/IGW/route tables, EKS cluster +
+  node group, ECR, OIDC provider, IAM roles, EBS CSI, core addons.
+- **A git commit NEVER runs terraform.** Only the deploy pipeline runs.
+- Day 17 lesson: a killed apply = half-built infra (no route table → nodes
+  couldn't join). Always let apply FINISH.
+
+**Private-file purge still pending (user-requested, do NOT skip):**
+- `docs/INTERVIEW_QA.md` + `docs/INTERVIEW_STORY.md` are in GitHub history.
+- User wants them removed from GitHub (local copies stay; backed up in
+  `%TEMP%\opencode\private-backup\`). `.gitignore` now lists both.
+- First `git filter-branch` attempt was aborted mid-rewrite — re-run it,
+  then force-push, before pushing anything else.
