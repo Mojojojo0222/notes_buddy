@@ -4,6 +4,7 @@
 
 image:
   pullPolicy: Always
+  tag: 5d3d902eb7b4551979d867add0489dfbb214c663
 
 app:
   replicas: 2
