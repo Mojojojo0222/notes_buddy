@@ -74,8 +74,8 @@ resource "aws_eks_cluster" "main" {
 
   vpc_config {
     subnet_ids              = var.subnet_ids
-    endpoint_public_access  = true   # kubectl from laptop works
-    endpoint_private_access = true   # nodes talk to control plane privately
+    endpoint_public_access  = true # kubectl from laptop works
+    endpoint_private_access = true # nodes talk to control plane privately
   }
 
   # Cluster must wait for IAM role policy to be attached before creation
@@ -162,7 +162,9 @@ resource "aws_eks_addon" "ebs_csi" {
   cluster_name             = aws_eks_cluster.main.name
   addon_name               = "aws-ebs-csi-driver"
   service_account_role_arn = aws_iam_role.ebs_csi.arn
-  resolve_conflicts        = "OVERWRITE"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
 
   depends_on = [
     aws_eks_node_group.main,

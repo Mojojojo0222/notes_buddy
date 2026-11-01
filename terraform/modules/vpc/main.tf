@@ -2,7 +2,7 @@
 # All EKS nodes, pods, and load balancers live inside this VPC
 resource "aws_vpc" "main" {
   cidr_block           = "192.168.0.0/16"
-  enable_dns_hostnames = true   # pods need DNS to resolve each other by name
+  enable_dns_hostnames = true # pods need DNS to resolve each other by name
   enable_dns_support   = true
 
   tags = {

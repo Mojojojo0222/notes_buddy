@@ -1,6 +1,7 @@
 resource "aws_ecr_repository" "main" {
   name                 = var.name
-  image_tag_mutability = "MUTABLE"  # allows overwriting :latest tag
+  image_tag_mutability = "MUTABLE" # allows overwriting :latest tag
+  force_delete         = true      # allow replace when the old repo still has images
 
   # Scan images on push — detects CVEs in your Docker layers
   # Free tier: basic scanning. Paid: enhanced scanning with Snyk

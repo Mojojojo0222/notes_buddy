@@ -10,13 +10,13 @@ module "vpc" {
 
 # EKS — Kubernetes control plane + worker nodes
 module "eks" {
-  source              = "./modules/eks"
-  cluster_name        = var.cluster_name
-  subnet_ids          = module.vpc.public_subnet_ids
-  node_instance_type  = var.node_instance_type
-  node_desired_size   = var.node_desired_size
-  node_min_size       = var.node_min_size
-  node_max_size       = var.node_max_size
+  source             = "./modules/eks"
+  cluster_name       = var.cluster_name
+  subnet_ids         = module.vpc.public_subnet_ids
+  node_instance_type = var.node_instance_type
+  node_desired_size  = var.node_desired_size
+  node_min_size      = var.node_min_size
+  node_max_size      = var.node_max_size
 }
 
 # ECR — container image registry
