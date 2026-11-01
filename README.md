@@ -2,337 +2,282 @@
 
 > A personal engineering journal that writes itself.
 
-No more manual note-taking. Notes Buddy runs silently in the background,
-captures every terminal command you run, and turns your daily work into
-a searchable, organized engineering log — automatically.
+Every command you type in Git Bash is captured with its working directory, git repo,
+exit code and timestamp — then turned into a searchable, categorized engineering log
+with daily summaries, sessions, full-text search and solution cards for repeated errors.
+
+Built as a full platform, not a script: **Spring Boot · PostgreSQL · Docker · Helm ·
+Argo CD GitOps · EKS (Terraform) · GitHub Actions OIDC → ECR · Prometheus/Grafana · k6.**
 
 ---
 
-## What It Does
+## Architecture — how one command becomes a dashboard row
 
-Every command you type in Git Bash gets recorded with:
-- the exact command text
-- the folder it was run from
-- the **git repo name** it was run inside (or `none`)
-- the time it was run
-- the category (git, docker, kubernetes, terraform, build, files, network, editor)
-
-You get a clean dashboard at `localhost:9098` showing everything
-grouped by date, newest first — with a daily summary, live search,
-and **category filter buttons**.
-
+```mermaid
+flowchart LR
+    T["Git Bash<br/>PROMPT_COMMAND hook"] -->|append line| LOG["~/.notes_buddy_log<br/>ts · workingDir · repo · command · exitCode"]
+    B["bashrc (optional)<br/>curl -X POST /ingest"] -.direct.-> API
+    LOG -->|poll every 10s| W["HistoryWatcher<br/>bookmark in WatcherState → no duplicates on restart"]
+    W -->|parse · categorize · filter junk| PG[("PostgreSQL 16")]
+    B --> API["REST API :9098<br/>/commands · /summary · /sessions · /solutions"]
+    PG --> API
+    API --> UI["Dashboard (vanilla JS)<br/>live search · category filters · auto-refresh 15s"]
+    PG -.Micrometer counters/timers.-> M["/actuator/prometheus"]
+    M --> PROM["Prometheus :9090<br/>4 alert rules"] --> GF["Grafana :3000<br/>ingest rate · p95 · JVM · errors"]
 ```
-⚡ Notes Buddy
 
-Today's Summary
-Commands Run: 22    Most Used: git status (3x)    Topics: [docker] [git] [files]
-
-[ all ] [ build ] [ docker ] [ files ] [ git ] [ network ]
-
-Saturday, June 28, 2026
-  22:03   git status
-          📁 /e/Notes_Buddy
-          🔀 notes-buddy
-  22:01   docker --version
-          📁 /c/Users/Lenovo
-  21:58   mvn spring-boot:run
-          📁 /e/Notes_Buddy
-          🔀 notes-buddy
-```
+The watcher is the only component that reads the log file; it stores its byte position in
+the database, so restarts are idempotent. Everything else is a plain REST read path, which
+is why the UI, `curl`, k6 and the alerting stack can all hit the same endpoints.
 
 ---
 
-## Tech Stack
+## Platform — CI/CD, GitOps and infrastructure
 
-| Layer      | Technology                |
-|------------|---------------------------|
-| Backend    | Spring Boot 3.2 (Java 17) |
-| Database   | H2 (file-based)           |
-| Frontend   | Vanilla HTML/JS           |
-| Shell      | Git Bash (Windows)        |
-| Container  | Docker (multi-stage build)|
+```mermaid
+flowchart TB
+    DEV["git push to main"] --> GHA["GitHub Actions · deploy.yml<br/>OIDC assume-role → zero static AWS keys"]
+    GHA --> ECR[("ECR<br/>:{git sha} + :latest")]
+    GHA -->|sed: bump image.tag| VAL["helm/notes-buddy/values-staging.yaml"]
+    VAL -->|"commit [skip ci]"| REPO[("this repo")]
+    REPO -->|path: helm/notes-buddy| ARGO["Argo CD Application<br/>auto-sync · prune · self-heal"]
+    TF["terraform/<br/>modules: vpc → eks → ecr"] --> EKS[("EKS cluster")]
+    ARGO --> EKS
+    EKS --> REL["LoadBalancer + HPA 2→4 + probes"]
+    EKS -.|/actuator/prometheus|.-> PROM2[Prometheus] --> GRAF[Grafana dashboard]
+    LOAD["k6 load-test.js"] -->|HTTP| REL
+```
+
+| Layer | What's in the repo |
+|---|---|
+| IaC | `terraform/` — `vpc`, `eks`, `ecr` modules + root wiring, remote state + lock |
+| CI/CD | `.github/workflows/deploy.yml` — build → ECR push → chart tag bump → commit |
+| GitOps | `argocd/apps/notes-buddy.yaml` — Application with `autoSync`, `prune`, `selfHeal` |
+| Packaging | `helm/notes-buddy` — one chart, three environments (`values-dev/staging/production`) |
+| Raw manifests | `k8s/` — Deployment, Service, HPA, Postgres, RBAC for the deployer, ConfigMap, Secret |
+| Observability | `prometheus.yml`, `prometheus-alerts.yml`, `grafana-dashboard.json` |
+| Load test | `load-test.js` — k6 scenarios: `ingest`, `search`, `mixed`, `pollers` |
 
 ---
 
-## Project Structure
+## Quick start
 
-```
-notes-buddy/
-├── src/main/java/com/notesbuddy/
-│   ├── NotesApplication.java              # entry point + @EnableScheduling
-│   ├── controller/
-│   │   └── CommandController.java         # REST endpoints
-│   ├── model/
-│   │   ├── Command.java                   # command entity (text, category, dir, repo, time)
-│   │   └── WatcherState.java              # bookmark entity (last line read)
-│   ├── repository/
-│   │   ├── CommandRepository.java
-│   │   └── WatcherStateRepository.java
-│   └── service/
-│       ├── HistoryWatcher.java            # reads log file every 10s
-│       └── SummaryService.java            # builds daily summary
-├── src/main/resources/
-│   ├── static/index.html                  # dashboard UI
-│   └── application.properties
-├── docs/
-│   ├── day1/day1-notes.md                 # terminal logger + core flow
-│   ├── day2/day2-notes.md                 # dashboard + summary
-│   ├── day3/day3-notes.md                 # working directory tracking
-│   ├── day4/day4-notes.md                 # repo tracking + filter buttons + Docker
-│   └── README.md                          # architecture + all annotations
-├── Dockerfile                             # multi-stage Docker build
-├── .dockerignore
-├── ROADMAP.md
-└── pom.xml
-```
+### Option A — whole stack with Docker Compose (recommended)
 
----
-
-## Getting Started
-
-### Option A — Run with Maven (simplest)
-
-#### Prerequisites
-- Java 17+
-- Maven 3.8+
-- Git Bash (Windows)
-
-#### 1. Clone the repo
 ```bash
-git clone https://github.com/YOUR_USERNAME/notes-buddy.git
-cd notes-buddy
+git clone https://github.com/Mojojojo0222/notes_buddy.git
+cd notes_buddy
+
+docker compose up --build -d
 ```
 
-#### 2. Configure Git Bash to log commands
+| Service | URL | Credentials |
+|---|---|---|
+| App + dashboard | http://localhost:9098 | — |
+| PostgreSQL | localhost:5432 | `notesbuddy` / `notesbuddy` |
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | `admin` / `admin` |
 
-Add this to `~/.bashrc` (create it if it doesn't exist):
+Postgres is `depends_on: service_healthy` (its `pg_isready` healthcheck gates app start),
+and the H2→Postgres migration is already done — the DB is the platform DB, not an
+in-memory toy.
+
+Optional demo data:
+
+```bash
+bash docs/seed-data.sh                    # seeds against http://localhost:9098
+URL=http://<host>:9098 bash docs/seed-data.sh
+```
+
+### Option B — just the app
+
+```bash
+# needs a reachable PostgreSQL (defaults in src/main/resources/application.properties)
+mvn spring-boot:run                       # → http://localhost:9098
+```
+
+Every datasource key is env-overridable (`PORT`, `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`),
+which is the same contract the Helm chart and ConfigMaps use — no config forks per environment.
+
+### Option C — capture your own terminal
+
+Add to `~/.bashrc`:
 
 ```bash
 NOTES_LOG="$HOME/.notes_buddy_log"
 
 log_command() {
-    local last_cmd
+    local last_cmd exit_code=$?
     last_cmd=$(history 1 | sed 's/^[ ]*[0-9]*[ ]*//')
     local repo
     repo=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "none")
-    echo "$(pwd)|${repo}|${last_cmd}" >> "$NOTES_LOG"
+    echo "$(date '+%Y-%m-%dT%H:%M:%S')|$(pwd)|${repo}|${last_cmd}|${exit_code}" >> "$NOTES_LOG"
 }
-
 export PROMPT_COMMAND='history -a; log_command'
 ```
 
-Make sure `~/.bash_profile` loads it:
-```bash
-if [ -f ~/.bashrc ]; then
-    source ~/.bashrc
-fi
-```
-
-Reload:
-```bash
-source ~/.bashrc
-```
-
-#### 3. Run the app
-```bash
-mvn spring-boot:run
-```
-
-#### 4. Open the dashboard
-```
-http://localhost:9098
-```
+`HistoryWatcher` picks the file up within 10 seconds. Prefer no file? Post straight to
+`/ingest` instead — both paths land in the same table (see `docs/COMMANDS.md` for the
+curl variant).
 
 ---
 
-### Option B — Run with Docker
+## Features
 
-#### Prerequisites
-- Docker Desktop installed and running
-- Git Bash configured (same `.bashrc` setup as above)
-
-#### 1. Build the image
-```bash
-docker build -t notes-buddy .
-```
-
-#### 2. Run the container
-
-**Windows Git Bash:**
-```bash
-docker run -d \
-  -p 9098:9098 \
-  -v "$HOME/.notes_buddy_log:/root/.notes_buddy_log" \
-  -v "$PWD/notesbuddy-db:/app/notesbuddy-db" \
-  --name notes-buddy \
-  notes-buddy
-```
-
-> `-v "$HOME/.notes_buddy_log:/root/.notes_buddy_log"` — mounts your log file into the container so HistoryWatcher can read it.
-> `-v "$PWD/notesbuddy-db:/app/notesbuddy-db"` — persists the H2 database outside the container so data survives restarts.
-
-#### 3. Open the dashboard
-```
-http://localhost:9098
-```
-
-#### Stop / restart
-```bash
-docker stop notes-buddy
-docker start notes-buddy
-```
+| Feature | Implementation |
+|---|---|
+| Command capture | `.bashrc` hook → `~/.notes_buddy_log` → `HistoryWatcher` (10s poll) |
+| Idempotent restart | `WatcherState` bookmark — no duplicate rows after a restart |
+| Repo + directory tracking | `git rev-parse --show-toplevel` at prompt time |
+| Exit codes | failed commands keep their code; weekly summary counts them |
+| Auto categories | git, docker, kubernetes, terraform, build, files, network, editor, other |
+| Search | `ILIKE` across command, directory, repo, tag and category |
+| Sessions | commands grouped by >30 min idle gaps |
+| Solution cards | a command that fails repeatedly surfaces the fix you tagged next to it |
+| Tags | `POST /commands/{id}/tag` labels a command (this is what feeds solution cards) |
+| Dashboard | single-file vanilla JS UI — live search, multi-select filters, 15s refresh, `escapeHtml()` on every row |
 
 ---
 
-## API Endpoints
+## API
 
-| Method | Endpoint                 | Description                                      |
-|--------|--------------------------|--------------------------------------------------|
-| GET    | `/`                      | Dashboard UI                                     |
-| GET    | `/commands/all`          | All commands as JSON, sorted by time             |
-| GET    | `/commands/by-date`      | Commands for a specific date (`?date=YYYY-MM-DD`)|
-| POST   | `/commands/{id}/tag`     | Tag a command (`?tag=myLabel`)                   |
-| GET    | `/summary`               | Today's summary (count, most used, topics)       |
-| GET    | `/summary/weekly`        | Weekly summary (last 7 days, includes error count)|
-| POST   | `/ingest`                | Ingestion endpoint (called by .bashrc curl)      |
-| GET    | `/sessions`              | Sessions grouped by 30-min idle gap              |
-| GET    | `/h2-console`            | H2 database browser (debug, non-Docker only)     |
+Base URL `http://localhost:9098`
 
-### Example — `/commands/all`
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | dashboard |
+| GET | `/commands/all` | every command, newest first |
+| GET | `/commands/by-date?date=YYYY-MM-DD` | one day |
+| GET | `/commands/search?q=docker` | full-text search |
+| POST | `/commands/{id}/tag?tag=myLabel` | tag a command |
+| GET | `/summary` | today: count, most used, topics |
+| GET | `/summary/weekly` | last 7 days incl. error count |
+| GET | `/sessions` | work sessions split on 30-min gaps |
+| GET | `/solutions` | repeated errors + their suggested fixes |
+| POST | `/ingest` | ingestion (`text`, `workingDir`, `repoName`, `timestamp`, `exitCode`) |
+| GET | `/actuator/health` | probes for k8s liveness/readiness |
+| GET | `/actuator/prometheus` | metrics scraped by Prometheus |
+
 ```json
-[
-  {
-    "id": 1,
-    "text": "git status",
-    "category": "git",
-    "workingDir": "/e/Notes_Buddy",
-    "repoName": "notes-buddy",
-    "savedAt": "2026-06-28T22:03:15"
-  }
-]
-```
-
-### Example — `/summary`
-```json
-{
-  "date": "2026-06-28",
-  "totalCommands": 22,
-  "topicsTouched": ["docker", "files", "git"],
-  "mostUsed": "git status (3 times)"
-}
+// GET /commands/all
+[{ "id": 1, "text": "git status", "category": "git",
+   "workingDir": "/e/Notes_Buddy", "repoName": "notes-buddy",
+   "exitCode": 0, "savedAt": "2026-06-28T22:03:15" }]
 ```
 
 ---
 
-## How It Works
+## Deployment
 
-```
-Git Bash (your terminal)
-    │
-    │  PROMPT_COMMAND runs after every command
-    │  detects git repo name via: git rev-parse --show-toplevel
-    │  writes → ~/.notes_buddy_log
-    │  format: /path/to/dir|repo-name|command text
-    ▼
-~/.notes_buddy_log
-    │
-    │  HistoryWatcher reads every 10 seconds
-    │  only reads new lines (bookmark stored in DB)
-    │  parses: dir | repo | command
-    │  detects category, filters junk
-    ▼
-H2 Database  (notesbuddy-db.mv.db)
-    │
-    ├── GET /commands/all  →  full command list (JSON)
-    └── GET /summary       →  daily stats (JSON)
-    ▼
-localhost:9098  (your browser)
-    │
-    ├── Summary box     — total, most used, topics
-    ├── Filter buttons  — click [git] to show only git commands
-    ├── Live search     — type to filter instantly
-    └── Command list    — grouped by date, newest first
-                          shows time, command, 📁 dir, 🔀 repo
+```bash
+# DEV — ClusterIP, 1 replica, no HPA
+helm install notes-buddy ./helm/notes-buddy -f helm/notes-buddy/values-dev.yaml -n notes-buddy --create-namespace
+
+# STAGING — LoadBalancer, 2 replicas, HPA 2→4 (what Argo CD deploys)
+helm install notes-buddy ./helm/notes-buddy -f helm/notes-buddy/values-staging.yaml -n notes-buddy --create-namespace
+
+helm template notes-buddy ./helm/notes-buddy -f helm/notes-buddy/values-dev.yaml   # render offline
+helm lint ./helm/notes-buddy
 ```
 
----
+GitOps path (what runs in the cluster):
 
-## Auto-detected Categories
+```bash
+kubectl apply -f argocd/apps/notes-buddy.yaml   # Argo CD watches helm/notes-buddy on main
+```
 
-| Category   | Detected From                                    |
-|------------|--------------------------------------------------|
-| git        | `git `                                           |
-| docker     | `docker `, `docker-compose `                     |
-| kubernetes | `kubectl `, `helm `                              |
-| terraform  | `terraform `, `tf `                              |
-| build      | `mvn `, `gradle `                                |
-| files      | `ls`, `cd `, `cp `, `mv `, `rm `, `mkdir `       |
-| network    | `ssh `, `scp `, `curl `, `wget `, `ping `        |
-| editor     | `cat `, `grep `, `tail `, `head `, `nano `, `vim `|
-| other      | everything else                                  |
+Push to `main` touching `src/`, `pom.xml`, `Dockerfile`, `helm/**` or the workflow →
+Actions builds, pushes `{sha}` + `latest` to ECR, bumps `values-staging.yaml`, commits
+back with `[skip ci]` → Argo CD reconciles → new pods. No human kubectl in the loop.
 
----
-
-## Dashboard Features
-
-| Feature             | How It Works                                                    |
-|---------------------|-----------------------------------------------------------------|
-| Summary box         | Fetches `/summary` on load — total count, most used, topics     |
-| Category filters    | Buttons built from actual data — click to toggle, multi-select  |
-| Live search         | Filters `allCommands` array in-browser, no server round trip    |
-| Repo tracking       | 🔀 label under each command showing which git repo it came from |
-| Directory tracking  | 📁 label under each command showing the working folder          |
-| Auto-refresh        | Fetches new data every 15 seconds silently                      |
-| XSS protection      | All command text run through `escapeHtml()` before rendering    |
+Infra from scratch: `cd terraform && terraform init && terraform plan` — modules are
+`vpc` (192.168.0.0/16, one public subnet per AZ with the EKS ELB tags, IGW + routes),
+`eks` (cluster, node group, EBS CSI addon, IAM roles) and `ecr` (repository with
+`force_delete` so `terraform destroy` is clean).
 
 ---
 
-## Roadmap
+## Observability
 
-See [ROADMAP.md](ROADMAP.md) for the full 6-month plan.
+**Metrics:** Micrometer → `/actuator/prometheus` → Prometheus scrape.
 
-**Currently built:**
-- ✅ Terminal command logging (Git Bash)
-- ✅ Working directory tracking
-- ✅ Git repo name per command
-- ✅ Auto category detection
-- ✅ Daily summary
-- ✅ Live search
-- ✅ Category filter buttons
-- ✅ Persistent bookmark (no duplicates on restart)
-- ✅ Docker support (multi-stage build)
+**Alerts** (`prometheus-alerts.yml`):
 
-**Coming next:**
-- 🔲 PostgreSQL migration
-- 🔲 Session detection (30-min idle gap)
-- 🔲 Weekly summary
-- 🔲 Timeline view (pick any date)
-- 🔲 File watcher (Dockerfile, pom.xml, *.yaml changes)
-- 🔲 Solution cards (link repeated errors to previous fixes)
-- 🔲 Semantic search (Qdrant vector DB)
+| Alert | Fires when |
+|---|---|
+| `AppDown` | target down for 30s |
+| `HighErrorRate` | error rate > 20% over 5m |
+| `IngestionStopped` | zero ingests for 10m (log file or watcher died) |
+| `SearchLatencyHigh` | search p95 > 2s |
 
----
+**Dashboards:** `grafana-dashboard.json` — ingestion rate, commands by category, search
+p95, totals, failures, JVM heap/non-heap.
 
-## Development Docs
+**Load test** (k6, run against a live cluster):
 
-Detailed day-by-day notes covering every flow, every line, every decision:
+```bash
+k6 run --env BASE=http://<host> --env SCENARIO=mixed load-test.js
+```
 
-| Day | What Was Built |
-|-----|---------------|
-| [Day 1](docs/day1/day1-notes.md) | Terminal logger, H2 DB, bash history watcher |
-| [Day 2](docs/day2/day2-notes.md) | Dashboard UI, daily summary, category detection |
-| [Day 3](docs/day3/day3-notes.md) | Working directory tracking, clean log format |
-| [Day 4](docs/day4/day4-notes.md) | Repo name tracking, category filter buttons, Docker |
-| [Architecture](docs/README.md) | Full architecture diagram, all annotations explained |
+Measured on 2× t3.small: **920 RPS sustained ingest with zero errors** (200 VUs);
+ceiling at 500 VUs = 718 RPS, 0.28% errors, p95 1.6s — caused by CPU-limit throttling
+and probe-timeout cascade, both identified and documented.
 
 ---
 
-## Contributing
+## Repository layout
 
-This project is in active early development.
-If you want to contribute or have ideas, open an issue.
+```
+notes_buddy/
+├── src/main/java/com/notesbuddy/
+│   ├── NotesApplication.java            # entry point, @EnableScheduling
+│   ├── controller/CommandController.java
+│   ├── model/                           # Command · Session · WatcherState
+│   ├── repository/                      # Spring Data JPA
+│   └── service/                         # HistoryWatcher · SummaryService · SessionService
+│                                        # SolutionService · CommandService · MetricsService
+├── src/main/resources/
+│   ├── application.properties           # every key env-overridable
+│   └── static/index.html                # dashboard UI
+├── helm/notes-buddy/                    # chart + dev/staging/prod values
+├── helm/argocd/values.yaml              # Argo CD install values
+├── argocd/apps/notes-buddy.yaml         # Application (auto-sync, prune, self-heal)
+├── k8s/                                 # raw manifests (Deployment, HPA, Postgres, RBAC)
+├── terraform/                           # modules: vpc · eks · ecr + root
+├── .github/workflows/deploy.yml         # OIDC → ECR → chart bump → commit
+├── prometheus.yml · prometheus-alerts.yml · grafana-dashboard.json
+├── load-test.js                         # k6 scenarios
+├── docker-compose.yml                   # app + postgres + prometheus + grafana
+├── docs/                                # RUNBOOK, CONCEPTS, command reference, day notes
+└── Dockerfile                           # multi-stage: maven build → JRE
+```
 
 ---
+
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | run it everywhere + troubleshooting index |
+| [docs/CONCEPTS_MASTER.md](docs/CONCEPTS_MASTER.md) | concept notes with this system as the worked example |
+| [docs/COMMANDS.md](docs/COMMANDS.md) | every operational command: build, ECR, terraform, kubectl, helm, Argo CD, API, `.bashrc` |
+| [docs/README.md](docs/README.md) | day-by-day build index + file-criticality ranking |
+| [ROADMAP.md](ROADMAP.md) | what's built vs. what's next |
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Spring Boot 3.2 (Java 17), Spring Data JPA, Actuator + Micrometer |
+| Database | PostgreSQL 16 (local H2 support removed — one DB everywhere) |
+| Frontend | Vanilla HTML/JS (no build step) |
+| Containers | Docker multi-stage build, Docker Compose stack |
+| Orchestration | Kubernetes via Helm (dev/staging/prod) + Argo CD |
+| CI/CD | GitHub Actions, AWS OIDC federation, Amazon ECR |
+| Infrastructure | Terraform (VPC, EKS, ECR modules) |
+| Observability | Prometheus, Grafana, 4 alert rules, k6 load tests |
 
 ## License
 
