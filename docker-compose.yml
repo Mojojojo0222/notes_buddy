@@ -16,6 +16,7 @@ services:
       retries: 5
 
   notes-buddy:
+    build: .                      # `docker compose up --build` works from a clean clone
     image: notes-buddy
     ports:
       - "9098:9098"

@@ -27,3 +27,17 @@ docs/AI_CONTEXT.md
 # Private interview prep — NEVER pushed to GitHub
 docs/INTERVIEW_QA.md
 docs/INTERVIEW_STORY.md
+
+# Private interview prep — NEVER pushed to GitHub
+interview-prep/
+
+# Local-only working files — NEVER pushed to GitHub
+Agents/
+ObservabilityGuide.txt
+docs/COMMANDS_DAYWISE.md
+
+# Build output + downloaded binaries
+target/
+docs.zip
+*.zip
+
